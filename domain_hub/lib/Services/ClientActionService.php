@@ -6070,16 +6070,45 @@ if($_POST['action'] == 'replace_ns_group' && isset($_POST['subdomain_id'])) {
                 self::microAggressiveMarkFailure($userId, $settings);
                 return ['success' => false];
             }
-            if (count($candidates) > 1 && $used < $maxExtraApi && method_exists($providerClient, 'deleteDnsRecord')) {
-                $used++;
-                $providerClient->deleteDnsRecord($record->cloudflare_zone_id, (string) ($candidates[1]['id'] ?? ''));
+            $deletedExtras = 0;
+            $deleteFailed = false;
+            if (count($candidates) > 1 && $used < $maxExtraApi) {
+                foreach (array_slice($candidates, 1) as $extraCandidate) {
+                    $extraId = trim((string) ($extraCandidate['id'] ?? ''));
+                    if ($extraId === '') { continue; }
+                    if ($used >= $maxExtraApi) { $deleteFailed = true; break; }
+                    $used++;
+                    if (method_exists($providerClient, 'deleteSubdomain')) {
+                        $del = $providerClient->deleteSubdomain($record->cloudflare_zone_id, $extraId, [
+                            'name' => $extraCandidate['name'] ?? $ctx['name'],
+                            'type' => $extraCandidate['type'] ?? $ctx['type'],
+                            'content' => $extraCandidate['content'] ?? null,
+                        ]);
+                    } elseif (method_exists($providerClient, 'deleteDnsRecord')) {
+                        $del = $providerClient->deleteDnsRecord($record->cloudflare_zone_id, $extraId);
+                    } else {
+                        $deleteFailed = true;
+                        break;
+                    }
+                    if ($del['success'] ?? false) {
+                        $deletedExtras++;
+                    } else {
+                        $deleteFailed = true;
+                        break;
+                    }
+                }
+            }
+            if ($deleteFailed) {
+                self::microAggressiveMarkFailure($userId, $settings);
+                return ['success' => false];
             }
             self::microAggressiveMarkSuccess($userId, $settings);
             return ['success' => true, 'repair' => [
                 'success' => true,
-                'record_id' => (string) ($target['id'] ?? ''),
+                'record_id' => (string) ((isset($upRes['result']) && is_array($upRes['result']) && isset($upRes['result']['id'])) ? $upRes['result']['id'] : ($target['id'] ?? '')),
                 'decision_path' => 'micro_aggressive',
                 'remote_candidates_count' => count($candidates),
+                'extra_conflict_records_deleted' => $deletedExtras,
             ]];
         } catch (\Throwable $e) {
             self::microAggressiveMarkFailure($userId, $settings);
