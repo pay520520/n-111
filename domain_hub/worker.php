@@ -1011,6 +1011,20 @@ function cfmod_worker_resolve_provider_account_id_for_rootdomain($rootdomainRow,
     return cfmod_resolve_provider_account_id($providerId, $rootdomain, null, $settings);
 }
 
+function cfmod_worker_provider_type_from_context(?array $providerContext): string
+{
+    if (!$providerContext) {
+        return '';
+    }
+
+    $providerType = $providerContext['account']['provider_type']
+        ?? $providerContext['provider_type']
+        ?? $providerContext['provider']['provider_type']
+        ?? '';
+
+    return strtolower(trim((string) $providerType));
+}
+
 function cfmod_worker_acquire_provider_client_cached($providerAccountId, array $settings, array &$cache, array &$stats, string $context): ?array
 {
     $key = $providerAccountId ?: 0;
@@ -1027,7 +1041,7 @@ function cfmod_worker_acquire_provider_client_cached($providerAccountId, array $
         $stats['warnings'][] = $context . '_provider_unavailable:' . $key;
         return null;
     }
-    $providerType = strtolower((string) (($clientContext['provider_type'] ?? $clientContext['provider']['provider_type'] ?? '') ?: ''));
+    $providerType = cfmod_worker_provider_type_from_context($clientContext);
     if (in_array($providerType, ['powerdns', 'pdns'], true) && is_object($clientContext['client'])) {
         $pdnsClient = $clientContext['client'];
         if (method_exists($pdnsClient, 'setFullZoneFallbackRrsetThreshold')) {
@@ -4717,7 +4731,7 @@ function cfmod_job_enforce_ban_dns($job, array $payload = []): array {
                 continue;
             }
             $cf = $providerContext['client'];
-            $providerType = strtolower((string) (($providerContext['provider_type'] ?? $providerContext['provider']['provider_type'] ?? '') ?: ''));
+            $providerType = cfmod_worker_provider_type_from_context($providerContext);
 
             $zone = $s->cloudflare_zone_id ?: $s->rootdomain;
             $name = strtolower($s->subdomain);
@@ -5658,7 +5672,7 @@ function cfmod_job_cleanup_expired_subdomains($job, array $payload = []): array 
                 if (!$providerContext || empty($providerContext['client'])) {
                     continue;
                 }
-                $providerType = strtolower((string) (($providerContext['provider_type'] ?? $providerContext['provider']['provider_type'] ?? '') ?: ''));
+                $providerType = cfmod_worker_provider_type_from_context($providerContext);
                 if (!in_array($providerType, ['powerdns', 'pdns'], true) || !method_exists($providerContext['client'], 'deleteDomainRecordsDeepBatch')) {
                     continue;
                 }
@@ -5758,7 +5772,7 @@ function cfmod_job_cleanup_expired_subdomains($job, array $payload = []): array 
                 $providerType = '';
                 $providerContextForStrategy = cfmod_worker_acquire_provider_client_cached($providerId, $settings, $providerClientsForStrategy, $stats, 'cleanup_provider_strategy');
                 if ($providerContextForStrategy) {
-                    $providerType = strtolower((string) (($providerContextForStrategy['provider_type'] ?? $providerContextForStrategy['provider']['provider_type'] ?? '') ?: ''));
+                    $providerType = cfmod_worker_provider_type_from_context($providerContextForStrategy);
                 }
                 $providerStrategy = cfmod_cleanup_provider_strategy($providerType, $settings);
                 $providerForcedLocalFirst = in_array($providerStrategy, ['local_first', 'remote_relaxed'], true) && !$strongConsistencyMode;
@@ -6083,7 +6097,7 @@ function cfmod_job_cleanup_expired_subdomain_remote($job, array $payload = []): 
         }
         $cf = $providerContext['client'];
         cfmod_cleanup_apply_client_timeout($cf, $settings);
-        $providerType = strtolower((string) (($providerContext['provider_type'] ?? $providerContext['provider']['provider_type'] ?? '') ?: ''));
+        $providerType = cfmod_worker_provider_type_from_context($providerContext);
         $providerCircuitKey = ($providerType !== '' ? $providerType : 'provider') . ':' . intval($providerId);
         if (cfmod_cleanup_circuit_is_open($providerCircuitKey, $settings)) {
             throw new \RuntimeException('provider_unavailable:circuit_open');

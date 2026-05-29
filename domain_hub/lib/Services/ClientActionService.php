@@ -4123,23 +4123,17 @@ if($_POST['action'] == "update_dns" && isset($_POST['subdomain_id'])) {
                                     ];
                                 }
 
-                                if ($record_type_upper === 'CAA') {
-                                    $res = $cf->updateDnsRecord($record->cloudflare_zone_id, $targetRecord->record_id, [
-                                        'type' => $record_type_upper,
-                                        'name' => $newFullName,
-                                        'content' => $caa_content,
-                                        'ttl' => $record_ttl
-                                    ]);
-                                } else {
-                                    $res = $cf->updateDnsRecordRaw($record->cloudflare_zone_id, $targetRecord->record_id, [
-                                        'type' => $record_type_upper,
-                                        'name' => $newFullName,
-                                        'content' => $record_content,
-                                        'ttl' => $record_ttl,
-                                        'line' => $line,
-                                        'priority' => $record_priority
-                                    ]);
-                                }
+                                $updateRecordPayload = [
+                                    'type' => $record_type_upper,
+                                    'name' => $newFullName,
+                                    'content' => $record_type_upper === 'CAA' ? $caa_content : $record_content,
+                                    'ttl' => $record_ttl,
+                                    'line' => $line,
+                                    'priority' => $record_priority,
+                                ];
+                                $res = method_exists($cf, 'updateDnsRecordRaw')
+                                    ? $cf->updateDnsRecordRaw($record->cloudflare_zone_id, $targetRecord->record_id, $updateRecordPayload)
+                                    : $cf->updateDnsRecord($record->cloudflare_zone_id, $targetRecord->record_id, $updateRecordPayload);
 
                                 if ($res['success']) {
                                     $verifyAfterWriteEnabled = !isset($module_settings['dns_update_verify_after_write'])
