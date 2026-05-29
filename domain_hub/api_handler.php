@@ -401,6 +401,16 @@ function api_is_pdns_provider(array $providerContext): bool {
     return is_object($client) && stripos(get_class($client), 'powerdns') !== false;
 }
 
+function api_is_alidns_provider(array $providerContext): bool {
+    $providerType = strtolower(trim((string)($providerContext['account']['provider_type'] ?? ($providerContext['provider_type'] ?? ''))));
+    if ($providerType !== '') {
+        return $providerType === 'alidns';
+    }
+
+    $client = $providerContext['client'] ?? null;
+    return is_object($client) && get_class($client) === 'CloudflareAPI';
+}
+
 function api_count_local_subdomains_by_rootdomain(string $rootdomain): int {
     $normalized = strtolower(trim($rootdomain));
     if ($normalized === '') {
@@ -3144,6 +3154,10 @@ function handleApiRequest(){
                                     $priority = intval($data['priority'] ?? 10);
                                     $priority = max(0, min(65535, $priority));
                                     $line = api_normalize_line_value($data['line'] ?? '');
+                                    if ($line !== '' && !api_is_alidns_provider($providerContext)) {
+                                        $code = 400;
+                                        $result = ['error' => 'line unsupported by provider'];
+                                    } else {
                                     $adapterPayload = [
                                         'subdomain_id' => $sid,
                                         'record_type' => $type,
@@ -3172,12 +3186,27 @@ function handleApiRequest(){
                                         'banReasonText' => '',
                                     ]);
                                     if (!empty($adapterResult['success'])) {
-                                        $latest = Capsule::table('mod_cloudflare_dns_records')
+                                        $latestQuery = Capsule::table('mod_cloudflare_dns_records')
                                             ->where('subdomain_id', $sid)
                                             ->where('name', api_normalize_dns_name($name))
                                             ->where('type', strtoupper($type))
-                                            ->orderBy('id', 'desc')
-                                            ->first();
+                                            ->where('content', $content)
+                                            ->whereRaw('COALESCE(`line`, "") = ?', [$line]);
+                                        if (in_array(strtoupper($type), ['MX', 'SRV'], true)) {
+                                            $latestQuery->where('priority', $priority);
+                                        } else {
+                                            $latestQuery->whereNull('priority');
+                                        }
+                                        $latest = $latestQuery->orderBy('id', 'desc')->first();
+                                        if (!$latest) {
+                                            $latest = Capsule::table('mod_cloudflare_dns_records')
+                                                ->where('subdomain_id', $sid)
+                                                ->where('name', api_normalize_dns_name($name))
+                                                ->where('type', strtoupper($type))
+                                                ->whereRaw('COALESCE(`line`, "") = ?', [$line])
+                                                ->orderBy('id', 'desc')
+                                                ->first();
+                                        }
                                         $result = [
                                             'success' => true,
                                             'message' => 'DNS record created successfully',
@@ -3187,6 +3216,7 @@ function handleApiRequest(){
                                     } else {
                                         $code = $adapterCode;
                                         $result = ['error' => (string)($adapterResult['error'] ?? 'create failed')];
+                                    }
                                     }
                                 }
                             }
@@ -3362,6 +3392,17 @@ function handleApiRequest(){
                                                 $code = 500;
                                                 $result = ['error' => 'provider unavailable'];
                                             } else {
+                                                $lineUnsupported = false;
+                                                if (!api_is_alidns_provider($providerContext)) {
+                                                    if (array_key_exists('line', $data) && $lineValue !== '') {
+                                                        $code = 400;
+                                                        $result = ['error' => 'line unsupported by provider'];
+                                                        $lineUnsupported = true;
+                                                    } else {
+                                                        $lineValue = '';
+                                                    }
+                                                }
+                                                if (!$lineUnsupported) {
                                                 $adapterRecordName = api_to_relative_record_name($targetName, (string) $s->subdomain);
                                                 $adapterPayload = [
                                                     'subdomain_id' => $sid,
@@ -3404,6 +3445,7 @@ function handleApiRequest(){
                                                 } else {
                                                     $code = $adapterCode;
                                                     $result = ['error' => (string)($adapterResult['error'] ?? 'update failed')];
+                                                }
                                                 }
                                             }
                                         }
