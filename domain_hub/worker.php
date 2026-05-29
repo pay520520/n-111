@@ -542,17 +542,43 @@ function cfmod_worker_normalize_record_content($content, ?string $type = null): 
     return function_exists('mb_strtolower') ? mb_strtolower($value, 'UTF-8') : strtolower($value);
 }
 
+function cfmod_worker_normalize_line_value($line): string {
+    if (class_exists('CfDnsConflictRepairService')) {
+        return CfDnsConflictRepairService::normalizeLineValue($line);
+    }
+    $value = strtolower(trim((string) $line));
+    if ($value === '' || $value === 'default' || $value === '默认') {
+        return '';
+    }
+    return $value;
+}
+
+function cfmod_worker_record_line_value($record): string {
+    if (is_array($record)) {
+        return cfmod_worker_normalize_line_value($record['line'] ?? ($record['Line'] ?? ($record['RecordLine'] ?? '')));
+    }
+    if (is_object($record)) {
+        return cfmod_worker_normalize_line_value($record->line ?? '');
+    }
+    return '';
+}
+
+function cfmod_worker_record_content_line_key($record): string {
+    if (is_array($record)) {
+        $content = $record['content'] ?? '';
+        $type = $record['type'] ?? null;
+    } else {
+        $content = is_object($record) ? ($record->content ?? '') : '';
+        $type = is_object($record) ? ($record->type ?? null) : null;
+    }
+    return cfmod_worker_normalize_record_content($content, is_string($type) ? $type : null)
+        . '|line:' . cfmod_worker_record_line_value($record);
+}
+
 function cfmod_worker_group_records_by_content(array $records): array {
     $grouped = [];
     foreach ($records as $record) {
-        if (is_array($record)) {
-            $content = $record['content'] ?? '';
-            $type = $record['type'] ?? null;
-        } else {
-            $content = $record->content ?? '';
-            $type = $record->type ?? null;
-        }
-        $key = cfmod_worker_normalize_record_content($content, is_string($type) ? $type : null);
+        $key = cfmod_worker_record_content_line_key($record);
         if (!isset($grouped[$key])) {
             $grouped[$key] = [];
         }
@@ -832,12 +858,14 @@ function cfmod_worker_import_remote_record_to_local(int $subdomainId, string $zo
         $recordId = isset($remoteRecord['id']) ? (string) $remoteRecord['id'] : '';
         $content = (string) ($remoteRecord['content'] ?? '');
         $ttl = intval($remoteRecord['ttl'] ?? 600);
+        $line = cfmod_worker_record_line_value($remoteRecord);
 
         $existsQuery = Capsule::table('mod_cloudflare_dns_records')
             ->where('subdomain_id', $subdomainId)
             ->whereRaw('LOWER(name) = ?', [strtolower($name)])
             ->whereRaw('UPPER(type) = ?', [strtoupper($type)])
-            ->where('content', $content);
+            ->where('content', $content)
+            ->whereRaw('COALESCE(`line`, "") = ?', [$line]);
 
         if ($recordId !== '') {
             $existsQuery->where(function ($query) use ($recordId) {
@@ -861,7 +889,7 @@ function cfmod_worker_import_remote_record_to_local(int $subdomainId, string $zo
             'proxied' => 0,
             'status' => 'active',
             'priority' => null,
-            'line' => null,
+            'line' => $line,
             'created_at' => date('Y-m-d H:i:s'),
             'updated_at' => date('Y-m-d H:i:s')
         ]);
@@ -2161,6 +2189,7 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array $l
                         $action = 'scope_skip_missing';
                     } else {
                         try {
+                            $remoteLine = cfmod_worker_record_line_value($cr);
                             Capsule::table('mod_cloudflare_dns_records')->insert([
                                 'subdomain_id' => $sub->id,
                                 'zone_id' => $zoneId,
@@ -2172,7 +2201,7 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array $l
                                 'proxied' => 0,
                                 'status' => 'active',
                                 'priority' => null,
-                                'line' => null,
+                                'line' => $remoteLine,
                                 'created_at' => date('Y-m-d H:i:s'),
                                 'updated_at' => date('Y-m-d H:i:s')
                             ]);
@@ -2908,6 +2937,7 @@ function cfmod_job_replace_root($job, array $payload = []): array {
                         'content' => $r->content ?? '',
                         'ttl' => intval($r->ttl ?? 600),
                         'priority' => isset($r->priority) ? intval($r->priority) : null,
+                        'line' => cfmod_worker_normalize_line_value($r->line ?? ''),
                     ];
                 }
             } else {
@@ -2922,6 +2952,7 @@ function cfmod_job_replace_root($job, array $payload = []): array {
                             'content' => $rr['content'] ?? '',
                             'ttl' => intval($rr['ttl'] ?? 600),
                             'priority' => null,
+                            'line' => cfmod_worker_record_line_value($rr),
                         ];
                     }
                 }
@@ -2941,21 +2972,56 @@ function cfmod_job_replace_root($job, array $payload = []): array {
                 }
 
                 $createdId = null;
-                $res = $targetCf->createDnsRecord($toZone, $newName, $rec['type'], $rec['content'], $rec['ttl'] ?: 600, false);
+                $recordLine = cfmod_worker_normalize_line_value($rec['line'] ?? '');
+                if ($recordLine !== '' && method_exists($targetCf, 'createDnsRecordRaw')) {
+                    $createPayload = [
+                        'type' => $rec['type'],
+                        'name' => $newName,
+                        'content' => $rec['content'],
+                        'ttl' => $rec['ttl'] ?: 600,
+                        'proxied' => false,
+                        'line' => $recordLine,
+                    ];
+                    if ($rec['type'] === 'MX' && $rec['priority'] !== null) {
+                        $createPayload['priority'] = $rec['priority'];
+                    }
+                    $res = $targetCf->createDnsRecordRaw($toZone, $createPayload);
+                } else {
+                    $res = $targetCf->createDnsRecord($toZone, $newName, $rec['type'], $rec['content'], $rec['ttl'] ?: 600, false);
+                }
                 if (!($res['success'] ?? false)) {
                     $existing = $targetCf->getDnsRecords($toZone, $newName, ['type' => $rec['type']]);
                     if (($existing['success'] ?? false) && !empty($existing['result'])) {
-                        $existOne = $existing['result'][0];
-                        $eid = $existOne['id'] ?? null;
-                        if ($eid) {
-                            $upd = $targetCf->updateDnsRecord($toZone, $eid, [
-                                'type' => $rec['type'],
-                                'name' => $newName,
-                                'content' => $rec['content'],
-                                'ttl' => $rec['ttl'] ?: 600,
-                                'priority' => $rec['priority']
-                            ]);
-                            if (($upd['success'] ?? false)) { $createdId = $eid; }
+                        $existOne = null;
+                        foreach (($existing['result'] ?? []) as $candidateExisting) {
+                            if (!is_array($candidateExisting)) {
+                                continue;
+                            }
+                            if (strtoupper((string) ($candidateExisting['type'] ?? '')) !== strtoupper((string) $rec['type'])) {
+                                continue;
+                            }
+                            if (cfmod_worker_record_line_value($candidateExisting) !== $recordLine) {
+                                continue;
+                            }
+                            $existOne = $candidateExisting;
+                            break;
+                        }
+                        if ($existOne !== null) {
+                            $eid = $existOne['id'] ?? null;
+                            if ($eid) {
+                                $updatePayload = [
+                                    'type' => $rec['type'],
+                                    'name' => $newName,
+                                    'content' => $rec['content'],
+                                    'ttl' => $rec['ttl'] ?: 600,
+                                    'priority' => $rec['priority']
+                                ];
+                                if ($recordLine !== '') {
+                                    $updatePayload['line'] = $recordLine;
+                                }
+                                $upd = $targetCf->updateDnsRecord($toZone, $eid, $updatePayload);
+                                if (($upd['success'] ?? false)) { $createdId = $eid; }
+                            }
                         }
                     }
                 } else {
@@ -2972,7 +3038,7 @@ function cfmod_job_replace_root($job, array $payload = []): array {
                 }
 
                 if ($createdId) {
-                    $dnsRowsToUpdate[] = [ 'local_id' => $rec['id'], 'new_name' => $newName, 'new_record_id' => $createdId ];
+                    $dnsRowsToUpdate[] = [ 'local_id' => $rec['id'], 'new_name' => $newName, 'new_record_id' => $createdId, 'line' => $recordLine ];
                     if ($newName === $newFull) { $primaryRecordId = $createdId; }
                 }
             }
@@ -2983,6 +3049,7 @@ function cfmod_job_replace_root($job, array $payload = []): array {
                         'name' => strtolower($u['new_name']),
                         'zone_id' => $toZone,
                         'record_id' => $u['new_record_id'],
+                        'line' => $u['line'] ?? '',
                         'updated_at' => $now,
                     ]);
                 }
@@ -3008,10 +3075,12 @@ function cfmod_job_replace_root($job, array $payload = []): array {
                         $content = (string)($fr['content'] ?? '');
                         $ttl = intval($fr['ttl'] ?? 600);
                         $rid = $fr['id'] ?? null;
+                        $line = cfmod_worker_record_line_value($fr);
                         $exists = Capsule::table('mod_cloudflare_dns_records')
                             ->where('subdomain_id', $s->id)
                             ->where('name', $name)
                             ->where('type', $type)
+                            ->whereRaw('COALESCE(`line`, "") = ?', [$line])
                             ->first();
                         if ($exists) {
                             Capsule::table('mod_cloudflare_dns_records')->where('id', $exists->id)->update([
@@ -3019,6 +3088,7 @@ function cfmod_job_replace_root($job, array $payload = []): array {
                                 'record_id' => $rid,
                                 'content' => $content,
                                 'ttl' => $ttl,
+                                'line' => $line,
                                 'updated_at' => $now
                             ]);
                             $stats['records_updated_local']++;
@@ -3033,7 +3103,7 @@ function cfmod_job_replace_root($job, array $payload = []): array {
                                 'ttl' => $ttl,
                                 'proxied' => 0,
                                 'priority' => null,
-                                'line' => null,
+                                'line' => $line,
                                 'created_at' => $now,
                                 'updated_at' => $now
                             ]);
@@ -3443,6 +3513,7 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
                             'ttl' => $ttl,
                             'priority' => $fr['priority'] ?? null,
                             'proxied' => !empty($fr['proxied']) ? 1 : 0,
+                            'line' => $fr['line'] ?? '',
                         ], $now);
                         if ($localSyncResult === 'updated') {
                             $stats['records_updated_local']++;
@@ -3762,12 +3833,28 @@ function cfmod_worker_transfer_normalize_record(array $record, string $defaultNa
         'content' => $content,
         'ttl' => $ttl,
         'priority' => $priority,
+        'line' => cfmod_worker_normalize_line_value($record['line'] ?? ($record['Line'] ?? ($record['RecordLine'] ?? ''))),
     ];
 }
 
 function cfmod_worker_transfer_create_on_target($providerClient, string $zoneId, string $name, string $type, array $record, int $ttl): array {
     $type = strtoupper(trim($type));
     $content = (string) ($record['content'] ?? '');
+    $line = cfmod_worker_normalize_line_value($record['line'] ?? ($record['Line'] ?? ($record['RecordLine'] ?? '')));
+
+    if ($line !== '' && method_exists($providerClient, 'createDnsRecordRaw')) {
+        $payload = [
+            'type' => $type,
+            'name' => $name,
+            'content' => $content,
+            'ttl' => $ttl,
+            'line' => $line,
+        ];
+        if ($type === 'MX' && isset($record['priority']) && $record['priority'] !== null) {
+            $payload['priority'] = intval($record['priority']);
+        }
+        return $providerClient->createDnsRecordRaw($zoneId, $payload);
+    }
 
     if ($type === 'MX' && method_exists($providerClient, 'createMXRecord')) {
         $priority = isset($record['priority']) && $record['priority'] !== null ? intval($record['priority']) : 10;
@@ -3817,6 +3904,9 @@ function cfmod_worker_transfer_remote_record_exists(array $existingRecords, arra
         if ($existingNormalized['type'] !== $candidateNormalized['type']) {
             continue;
         }
+        if (($existingNormalized['line'] ?? '') !== ($candidateNormalized['line'] ?? '')) {
+            continue;
+        }
 
         if ($candidateNormalized['type'] === 'MX') {
             $candidateMx = cfmod_worker_transfer_mx_parts($candidateNormalized);
@@ -3854,12 +3944,14 @@ function cfmod_worker_transfer_upsert_local_record(int $subdomainId, string $tar
     $recordContent = (string) $normalized['content'];
     $recordTtl = intval($normalized['ttl'] ?? 600);
     $recordPriority = $normalized['priority'];
+    $recordLine = cfmod_worker_normalize_line_value($normalized['line'] ?? ($remoteRecord['line'] ?? ''));
 
     $existing = null;
     if ($recordId !== null && $recordId !== '') {
         $existing = Capsule::table('mod_cloudflare_dns_records')
             ->where('subdomain_id', $subdomainId)
             ->where('record_id', $recordId)
+            ->whereRaw('COALESCE(`line`, "") = ?', [$recordLine])
             ->first();
     }
     if (!$existing) {
@@ -3868,6 +3960,7 @@ function cfmod_worker_transfer_upsert_local_record(int $subdomainId, string $tar
             ->where('name', $recordName)
             ->where('type', $recordType)
             ->where('content', $recordContent)
+            ->whereRaw('COALESCE(`line`, "") = ?', [$recordLine])
             ->first();
     }
 
@@ -3879,6 +3972,7 @@ function cfmod_worker_transfer_upsert_local_record(int $subdomainId, string $tar
         'ttl' => $recordTtl,
         'priority' => $recordPriority,
         'proxied' => !empty($remoteRecord['proxied']) ? 1 : 0,
+        'line' => $recordLine,
         'updated_at' => $now,
     ];
     if ($recordId !== null && $recordId !== '') {
@@ -3900,7 +3994,7 @@ function cfmod_worker_transfer_upsert_local_record(int $subdomainId, string $tar
         'ttl' => $recordTtl,
         'proxied' => !empty($remoteRecord['proxied']) ? 1 : 0,
         'priority' => $recordPriority,
-        'line' => null,
+        'line' => $recordLine,
         'created_at' => $now,
         'updated_at' => $now,
     ]);
@@ -4323,14 +4417,15 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
                                     continue;
                                 }
 
-                                $lineKey = 'default';
+                                $remoteLine = cfmod_worker_record_line_value($cr);
+                                $lineKey = $remoteLine === '' ? 'default' : $remoteLine;
                                 if ($reconcileMode === 'local_empty_add_as_replace'
                                     && in_array(strtoupper((string) $recordType), $replaceTypes, true)) {
                                     $managedRows = Capsule::table('mod_cloudflare_dns_records')
                                         ->where('subdomain_id', $s->id)
                                         ->where('name', strtolower((string) $recordName))
                                         ->where('type', strtoupper((string) $recordType))
-                                        ->whereRaw('COALESCE(`line`, "") = ?', [''])
+                                        ->whereRaw('COALESCE(`line`, "") = ?', [$remoteLine])
                                         ->get();
                                     $managedRowsArr = ($managedRows instanceof \Illuminate\Support\Collection) ? $managedRows->all() : (array) $managedRows;
                                     if (count($managedRowsArr) > 0) {
@@ -4350,7 +4445,7 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
                                                 'type' => $recordType,
                                                 'record_id' => $cr['id'] ?? null,
                                                 'managed_record_key' => strtolower($recordName . '|' . strtoupper($recordType) . '|' . $lineKey),
-                                                'line_normalized' => '',
+                                                'line_normalized' => $remoteLine,
                                             ]);
                                             cfmod_track_sync_stat($stats, 'reconcile', $action);
                                             continue;
@@ -4373,7 +4468,7 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
                                             'ttl' => intval($cr['ttl'] ?? 600),
                                             'proxied' => 0,
                                             'priority' => null,
-                                            'line' => null,
+                                            'line' => $remoteLine,
                                             'created_at' => $now,
                                             'updated_at' => $now
                                         ]);
@@ -4385,6 +4480,7 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
                                     'name' => $recordName,
                                     'type' => $recordType,
                                     'record_id' => $cr['id'] ?? null,
+                                    'line' => cfmod_worker_record_line_value($cr),
                                 ]);
                                 cfmod_track_sync_stat($stats, 'reconcile', $action);
                             }
@@ -4397,14 +4493,29 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
                                         if (!$allowFixMissing) {
                                             $action = 'scope_skip_missing';
                                         } else {
-                                            $res = $cf->createDnsRecord(
-                                                $zone,
-                                                $recordName,
-                                                $recordType,
-                                                (string) ($lr->content ?? ''),
-                                                intval($lr->ttl ?? 600),
-                                                boolval($lr->proxied ?? false)
-                                            );
+                                            $localLine = cfmod_worker_record_line_value($lr);
+                                            if ($localLine !== '' && method_exists($cf, 'createDnsRecordRaw')) {
+                                                $createPayload = [
+                                                    'type' => $recordType,
+                                                    'name' => $recordName,
+                                                    'content' => (string) ($lr->content ?? ''),
+                                                    'ttl' => intval($lr->ttl ?? 600),
+                                                    'line' => $localLine,
+                                                ];
+                                                if (in_array(strtoupper((string) $recordType), ['MX', 'SRV'], true) && isset($lr->priority) && $lr->priority !== null) {
+                                                    $createPayload['priority'] = intval($lr->priority);
+                                                }
+                                                $res = $cf->createDnsRecordRaw($zone, $createPayload);
+                                            } else {
+                                                $res = $cf->createDnsRecord(
+                                                    $zone,
+                                                    $recordName,
+                                                    $recordType,
+                                                    (string) ($lr->content ?? ''),
+                                                    intval($lr->ttl ?? 600),
+                                                    boolval($lr->proxied ?? false)
+                                                );
+                                            }
                                             if ($res['success'] ?? false) {
                                                 $newId = $res['result']['id'] ?? null;
                                                 Capsule::table('mod_cloudflare_dns_records')->where('id', $lr->id)->update([
@@ -4421,6 +4532,7 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
                                         'name' => $recordName,
                                         'type' => $recordType,
                                         'content' => (string) ($lr->content ?? ''),
+                                        'line' => cfmod_worker_record_line_value($lr),
                                     ]);
                                     cfmod_track_sync_stat($stats, 'reconcile', $action);
                                     continue;
