@@ -5683,10 +5683,13 @@ if($_POST['action'] == 'replace_ns_group' && isset($_POST['subdomain_id'])) {
         $localName = self::normalizeDnsNameForCompare((string) ($localRecord->name ?? ''));
         $localType = strtoupper(trim((string) ($localRecord->type ?? '')));
         $localContent = self::normalizeDnsContent((string) ($localRecord->content ?? ''), $localType);
+        $remoteLine = self::normalizeLineValue($remoteRecord['line'] ?? '');
+        $localLine = self::normalizeLineValue($localRecord->line ?? '');
 
         return $remoteName === $localName
             && $remoteType === $localType
-            && $remoteContent === $localContent;
+            && $remoteContent === $localContent
+            && $remoteLine === $localLine;
     }
 
     private static function normalizeDnsNameForCompare(string $name): string
