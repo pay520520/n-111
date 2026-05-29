@@ -2607,6 +2607,7 @@ function cfmod_fetch_dns_records_for_subdomains(array $subdomainRows, string $fi
         $pageSize = max(1, min(200, $pageSize));
         $dnsPage = max(1, intval($options['dns_page'] ?? 1));
         $dnsPageFor = intval($options['dns_page_for'] ?? 0);
+        $loadRecords = !array_key_exists('load_records', $options) || !empty($options['load_records']);
 
         $filterTypeNormalized = strtoupper(trim($filterType));
         if ($filterTypeNormalized === '') {
@@ -2681,6 +2682,15 @@ function cfmod_fetch_dns_records_for_subdomains(array $subdomainRows, string $fi
 
             $offset = $pageForSubdomain > 1 ? ($pageForSubdomain - 1) * $pageSize : 0;
             $records = [];
+            if (!$loadRecords) {
+                $result['records'][$sid] = [
+                    'items' => [],
+                    'page' => $pageForSubdomain,
+                    'page_size' => $pageSize,
+                    'lazy' => true,
+                ];
+                continue;
+            }
             if ($totalForSubdomain > 0) {
                 try {
                     $recordsQuery = Capsule::table('mod_cloudflare_dns_records')

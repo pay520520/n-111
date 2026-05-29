@@ -1357,6 +1357,36 @@ class CfClientController
                                 }
                             }
 
+                            // DNS 详情懒加载 / CNAME 互斥预检 AJAX
+                            if (in_array($action, ['ajax_load_dns_records', 'ajax_check_dns_cname_conflict'], true)) {
+                                header('Content-Type: application/json; charset=utf-8');
+                                try {
+                                    self::assertAjaxCsrfToken();
+                                    $rawInput = file_get_contents('php://input');
+                                    $payload = json_decode($rawInput, true);
+                                    if (!is_array($payload)) {
+                                        $payload = [];
+                                    }
+
+                                    if ($action === 'ajax_load_dns_records') {
+                                        $result = self::buildDnsRecordsAjaxPayload($userId, $payload);
+                                        echo json_encode(['success' => true, 'data' => $result], JSON_UNESCAPED_UNICODE);
+                                        exit;
+                                    }
+
+                                    $result = self::buildDnsCnameConflictAjaxPayload($userId, $payload);
+                                    echo json_encode(['success' => true, 'data' => $result], JSON_UNESCAPED_UNICODE);
+                                    exit;
+                                } catch (\Throwable $e) {
+                                    $safeMessage = trim((string) $e->getMessage());
+                                    if ($safeMessage === '') {
+                                        $safeMessage = self::actionText('cfclient.ajax.dns_records.error', 'DNS 记录加载失败，请稍后再试。');
+                                    }
+                                    echo json_encode(['success' => false, 'error' => $safeMessage], JSON_UNESCAPED_UNICODE);
+                                    exit;
+                                }
+                            }
+
                             // 帮助中心 AI 搜索 / 问答 AJAX
                             if ($action === 'ajax_help_ai_search') {
                                 header('Content-Type: application/json; charset=utf-8');
@@ -2387,6 +2417,8 @@ class CfClientController
             'disableApiKey' => $buildUrl('ajax_disable_api_key'),
             'enableApiKey' => $buildUrl('ajax_enable_api_key'),
             'helpAiSearch' => $buildUrl('ajax_help_ai_search'),
+            'dnsRecords' => $buildUrl('ajax_load_dns_records'),
+            'dnsCnameConflict' => $buildUrl('ajax_check_dns_cname_conflict'),
             'domainGift' => [
                 'initiate' => $buildUrl('ajax_initiate_domain_gift'),
                 'accept' => $buildUrl('ajax_accept_domain_gift'),
@@ -2454,6 +2486,216 @@ class CfClientController
             'retry_after_minutes' => $minutes,
         ]);
         exit;
+    }
+
+
+    private static function assertAjaxCsrfToken(): void
+    {
+        $csrf = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
+        if (empty($_SESSION['cfmod_csrf']) || !hash_equals((string) $_SESSION['cfmod_csrf'], (string) $csrf)) {
+            throw new \RuntimeException(self::actionText('cfclient.csrf_failed', '安全校验失败：请刷新页面后重试。'));
+        }
+    }
+
+    private static function buildDnsRecordsAjaxPayload(int $userId, array $payload): array
+    {
+        $subdomainId = (int) ($payload['subdomain_id'] ?? 0);
+        if ($subdomainId <= 0 || $userId <= 0) {
+            throw new \RuntimeException(self::actionText('cfclient.ajax.dns_records.invalid', '无效的域名参数。'));
+        }
+
+        $subdomain = Capsule::table('mod_cloudflare_subdomain')
+            ->where('id', $subdomainId)
+            ->where('userid', $userId)
+            ->first();
+        if (!$subdomain) {
+            throw new \RuntimeException(self::actionText('cfclient.ajax.dns_records.not_found', '未找到该域名或无权查看。'));
+        }
+
+        $page = max(1, (int) ($payload['page'] ?? 1));
+        $pageSize = (int) ($payload['page_size'] ?? 20);
+        $pageSize = max(1, min(200, $pageSize));
+        $filterType = strtoupper(trim((string) ($payload['filter_type'] ?? '')));
+        $filterName = trim((string) ($payload['filter_name'] ?? ''));
+
+        $dataset = function_exists('cfmod_fetch_dns_records_for_subdomains')
+            ? cfmod_fetch_dns_records_for_subdomains([$subdomain], $filterType, $filterName, [
+                'page_size' => $pageSize,
+                'dns_page' => $page,
+                'dns_page_for' => $subdomainId,
+                'load_records' => true,
+            ])
+            : ['records' => [], 'ns' => [], 'totals' => []];
+
+        $bundle = $dataset['records'][$subdomainId] ?? ['items' => [], 'page' => $page, 'page_size' => $pageSize];
+        $recordsRaw = is_array($bundle) && array_key_exists('items', $bundle) ? ($bundle['items'] ?? []) : $bundle;
+        $records = [];
+        foreach ($recordsRaw as $record) {
+            $records[] = self::normalizeDnsRecordForAjax($record);
+        }
+
+        $total = (int) (($dataset['totals'][$subdomainId] ?? 0));
+        $page = (int) (is_array($bundle) ? ($bundle['page'] ?? $page) : $page);
+        $totalPages = $total > 0 ? max(1, (int) ceil($total / $pageSize)) : 1;
+        if ($page > $totalPages) {
+            $page = $totalPages;
+        }
+
+        $rootdomain = strtolower(trim((string) ($subdomain->rootdomain ?? '')));
+        $status = strtolower(trim((string) ($subdomain->status ?? '')));
+        $rootMaintenance = self::isRootdomainInMaintenanceForAjax($rootdomain);
+        $rootNsDisabled = self::isRootdomainNsManagementDisabledForAjax($rootdomain);
+        $pendingDelete = in_array($status, ['pending_delete', 'pending_remove', 'expired_pending_remote_cleanup', 'auto_pending_delete', 'delete_pending', 'deleting'], true);
+
+        return [
+            'subdomain_id' => $subdomainId,
+            'subdomain' => (string) ($subdomain->subdomain ?? ''),
+            'rootdomain' => $rootdomain,
+            'records' => $records,
+            'ns' => array_values((array) ($dataset['ns'][$subdomainId] ?? [])),
+            'pagination' => [
+                'page' => $page,
+                'page_size' => $pageSize,
+                'total' => $total,
+                'total_pages' => $totalPages,
+            ],
+            'state' => [
+                'root_maintenance' => $rootMaintenance,
+                'root_ns_disabled' => $rootNsDisabled,
+                'pending_delete' => $pendingDelete,
+                'server_hold' => $status === 'suspended',
+            ],
+        ];
+    }
+
+    private static function buildDnsCnameConflictAjaxPayload(int $userId, array $payload): array
+    {
+        $subdomainId = (int) ($payload['subdomain_id'] ?? 0);
+        $recordType = strtoupper(trim((string) ($payload['record_type'] ?? $payload['type'] ?? '')));
+        $recordName = trim((string) ($payload['record_name'] ?? $payload['name'] ?? '@'));
+        $recordId = trim((string) ($payload['record_id'] ?? ''));
+        $localId = (int) ($payload['id'] ?? 0);
+        if ($subdomainId <= 0 || $userId <= 0 || $recordType === '') {
+            throw new \RuntimeException(self::actionText('cfclient.ajax.dns_conflict.invalid', 'DNS 记录参数不完整。'));
+        }
+
+        $subdomain = Capsule::table('mod_cloudflare_subdomain')
+            ->where('id', $subdomainId)
+            ->where('userid', $userId)
+            ->first();
+        if (!$subdomain) {
+            throw new \RuntimeException(self::actionText('cfclient.ajax.dns_records.not_found', '未找到该域名或无权查看。'));
+        }
+
+        $fullName = self::resolveDnsFullNameForAjax($recordName, (string) ($subdomain->subdomain ?? ''));
+        $query = Capsule::table('mod_cloudflare_dns_records')
+            ->where('subdomain_id', $subdomainId)
+            ->whereRaw('LOWER(name) = ?', [strtolower(rtrim($fullName, '.'))]);
+        if ($localId > 0) {
+            $query->where('id', '<>', $localId);
+        } elseif ($recordId !== '') {
+            $query->where(function ($q) use ($recordId) {
+                $q->whereNull('record_id')->orWhere('record_id', '<>', $recordId);
+            });
+        }
+
+        $rows = $query->select('id', 'record_id', 'type')->get();
+        $hasCname = false;
+        $hasNonCname = false;
+        foreach ($rows as $row) {
+            $type = strtoupper(trim((string) ($row->type ?? '')));
+            if ($type === 'CNAME') {
+                $hasCname = true;
+            } elseif ($type !== '') {
+                $hasNonCname = true;
+            }
+        }
+        $conflict = ($recordType === 'CNAME') ? $hasNonCname : $hasCname;
+        $message = '';
+        if ($conflict) {
+            $message = self::actionText('dns.cname_mutex_conflict', '同名记录与 CNAME 互斥：同名已有 CNAME 时不能新增其他类型；同名已有其他类型时不能新增 CNAME。');
+        }
+
+        return [
+            'conflict' => $conflict,
+            'message' => $message,
+            'full_name' => $fullName,
+            'has_cname' => $hasCname,
+            'has_non_cname' => $hasNonCname,
+        ];
+    }
+
+    private static function normalizeDnsRecordForAjax($record): array
+    {
+        if ($record instanceof \stdClass) {
+            $record = (array) $record;
+        }
+        if (!is_array($record)) {
+            $record = [];
+        }
+        return [
+            'id' => (int) ($record['id'] ?? 0),
+            'record_id' => (string) ($record['record_id'] ?? ''),
+            'name' => strtolower(rtrim(trim((string) ($record['name'] ?? '')), '.')),
+            'type' => strtoupper(trim((string) ($record['type'] ?? ''))),
+            'content' => (string) ($record['content'] ?? ''),
+            'ttl' => (int) ($record['ttl'] ?? 600),
+            'line' => (string) ($record['line'] ?? 'default'),
+            'priority' => array_key_exists('priority', $record) ? ($record['priority'] === null ? null : (int) $record['priority']) : null,
+            'proxied' => !empty($record['proxied']),
+            'status' => (string) ($record['status'] ?? 'active'),
+            'created_at' => (string) ($record['created_at'] ?? ''),
+            'updated_at' => (string) ($record['updated_at'] ?? ''),
+        ];
+    }
+
+    private static function resolveDnsFullNameForAjax(string $recordName, string $subdomain): string
+    {
+        $recordName = strtolower(rtrim(trim($recordName), '.'));
+        $subdomain = strtolower(rtrim(trim($subdomain), '.'));
+        if ($recordName === '' || $recordName === '@') {
+            return $subdomain;
+        }
+        if ($subdomain !== '' && $recordName === $subdomain) {
+            return $subdomain;
+        }
+        if ($subdomain !== '' && substr($recordName, -strlen('.' . $subdomain)) === '.' . $subdomain) {
+            return $recordName;
+        }
+        return $recordName . '.' . $subdomain;
+    }
+
+    private static function isRootdomainInMaintenanceForAjax(string $rootdomain): bool
+    {
+        if ($rootdomain === '') {
+            return false;
+        }
+        try {
+            $value = Capsule::table('mod_cloudflare_rootdomains')
+                ->whereRaw('LOWER(domain) = ?', [strtolower($rootdomain)])
+                ->value('maintenance');
+            return (int) $value === 1;
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    private static function isRootdomainNsManagementDisabledForAjax(string $rootdomain): bool
+    {
+        if ($rootdomain === '') {
+            return false;
+        }
+        try {
+            if (!Capsule::schema()->hasColumn('mod_cloudflare_rootdomains', 'disable_ns_management')) {
+                return false;
+            }
+            $value = Capsule::table('mod_cloudflare_rootdomains')
+                ->whereRaw('LOWER(domain) = ?', [strtolower($rootdomain)])
+                ->value('disable_ns_management');
+            return (int) $value === 1;
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     private static function buildHelpAiAccountSnapshot(int $userId): array

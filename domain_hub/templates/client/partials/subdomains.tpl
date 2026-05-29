@@ -369,226 +369,51 @@
                                                 <h6 class="mb-3"><?php echo cfclient_lang('cfclient.subdomains.details.title', 'DNS解析记录', [], true); ?></h6>
                                                 <?php
                                                     $totalRecords = $dnsTotalsBySubId[$e->id] ?? 0;
-                                                    $recordBundle = $filteredBySubId[$e->id] ?? [];
-                                                    $recordsForDisplay = [];
-                                                    $bundlePage = 1;
-                                                    if (is_array($recordBundle) && array_key_exists('items', $recordBundle)) {
-                                                        $recordsForDisplay = $recordBundle['items'];
-                                                        $bundlePage = intval($recordBundle['page'] ?? 1);
-                                                    } elseif (is_array($recordBundle)) {
-                                                        $recordsForDisplay = $recordBundle;
-                                                    }
-                                                    $dnsPages = $totalRecords > 0 ? max(1, (int) ceil($totalRecords / $dnsPageSize)) : 1;
-                                                    $activeDnsPage = ($dnsPageFor === intval($e->id)) ? $dnsPage : $bundlePage;
-                                                    if ($activeDnsPage > $dnsPages) {
-                                                        $activeDnsPage = $dnsPages;
-                                                    }
+                                                    $detailsDisabled = $rootInMaintenance || $pendingDelete || $isServerHold;
+                                                    $detailsDisabledMessage = $pendingDelete
+                                                        ? cfclient_lang('cfclient.subdomains.delete.pending', '删除申请已提交，系统稍后会自动处理。', [], true)
+                                                        : ($isServerHold
+                                                            ? cfclient_lang('cfclient.subdomains.server_hold.notice', '此域名处于ServerHold状态，暂时无法进行任何操作。', [], true)
+                                                            : ($rootInMaintenance ? cfclient_lang('cfclient.subdomains.maintenance.notice', '该根域名正在维护中，暂时无法进行DNS操作。', [], true) : ''));
                                                 ?>
-                                                <?php if($totalRecords > 0): ?>
-                                                    <div class="table-responsive">
-                                                        <table class="table table-sm table-bordered">
-                                                            <thead class="table-light">
-                                                                <tr>
-                                                                    <th class="text-dark fw-bold"><?php echo cfclient_lang('cfclient.subdomains.details.table.name', '名称', [], true); ?></th>
-                                                                    <th class="text-dark fw-bold"><?php echo cfclient_lang('cfclient.subdomains.details.table.type', '类型', [], true); ?></th>
-                                                                    <th class="text-dark fw-bold"><?php echo cfclient_lang('cfclient.subdomains.details.table.content', '内容', [], true); ?></th>
-                                                                    <th class="text-dark fw-bold">TTL</th>
-                                                                    <th class="text-dark fw-bold"><?php echo cfclient_lang('cfclient.subdomains.details.table.line', '线路', [], true); ?></th>
-                                                                    <th class="text-dark fw-bold"><?php echo cfclient_lang('cfclient.subdomains.details.table.actions', '操作', [], true); ?></th>
-                                                                </tr>
-                                                            </thead>
-                                                            <tbody>
-                                                                <?php if(!empty($recordsForDisplay)): ?>
-                                                                    <?php foreach ($recordsForDisplay as $r): ?>
-                                                                    <?php if ($rootNsDisabled && strtoupper((string) ($r->type ?? '')) === 'NS') { continue; } ?>
-                                                                    <tr>
-                                                                        <?php
-                                                                            $recordNameRaw = rtrim(trim((string)($r->name ?? '')), '.');
-                                                                            $subdomainFqdnRaw = rtrim(trim((string)($e->subdomain ?? '')), '.');
-                                                                            $recordHostDisplay = '@';
-                                                                            if ($recordNameRaw !== '' && $recordNameRaw !== '@') {
-                                                                                $recordNameLower = strtolower($recordNameRaw);
-                                                                                $subdomainLower = strtolower($subdomainFqdnRaw);
-                                                                                if ($subdomainLower !== '' && $recordNameLower !== $subdomainLower) {
-                                                                                    $suffix = '.' . $subdomainLower;
-                                                                                    if (substr($recordNameLower, -strlen($suffix)) === $suffix) {
-                                                                                        $recordHostDisplay = substr($recordNameRaw, 0, strlen($recordNameRaw) - strlen($suffix));
-                                                                                        if ($recordHostDisplay === '') {
-                                                                                            $recordHostDisplay = '@';
-                                                                                        }
-                                                                                    } else {
-                                                                                        $recordHostDisplay = $recordNameRaw;
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        ?>
-                                                                        <td>
-                                                                            <span class="dns-record-name">
-                                                                                <?php if($recordHostDisplay === '@'): ?>
-                                                                                    <span class="badge bg-primary fs-6 fw-bold">@</span>
-                                                                                <?php else: ?>
-                                                                                    <span class="dns-name-text"><?php echo htmlspecialchars($recordHostDisplay); ?></span>
-                                                                                <?php endif; ?>
-                                                                            </span>
-                                                                        </td>
-                                                                        <td>
-                                                                            <span class="badge bg-info text-dark"><?php echo htmlspecialchars($r->type); ?></span>
-                                                                        </td>
-                                                                        <td>
-                                                                            <?php
-                                                                            $recordContentRaw = (string) ($r->content ?? '');
-                                                                            $recordContentLen = function_exists('mb_strlen') ? mb_strlen($recordContentRaw, 'UTF-8') : strlen($recordContentRaw);
-                                                                            $recordContentNeedFold = $recordContentLen > 72;
-                                                                            $recordContentPreview = $recordContentRaw;
-                                                                            if ($recordContentNeedFold) {
-                                                                                if (function_exists('mb_substr')) {
-                                                                                    $head = mb_substr($recordContentRaw, 0, 24, 'UTF-8');
-                                                                                    $tail = mb_substr($recordContentRaw, -20, 20, 'UTF-8');
-                                                                                    $recordContentPreview = $head . '...' . $tail;
-                                                                                } else {
-                                                                                    $head = substr($recordContentRaw, 0, 24);
-                                                                                    $tail = substr($recordContentRaw, -20);
-                                                                                    $recordContentPreview = $head . '...' . $tail;
-                                                                                }
-                                                                            }
-                                                                            ?>
-                                                                            <div class="d-flex align-items-start">
-                                                                                <div class="text-dark fw-medium" style="max-width:560px;">
-                                                                                    <?php if ($recordContentNeedFold): ?>
-                                                                                        <details>
-                                                                                            <summary style="cursor:pointer;word-break:break-all;"><?php echo htmlspecialchars($recordContentPreview); ?></summary>
-                                                                                            <div class="mt-1" style="word-break:break-all;white-space:pre-wrap;"><?php echo htmlspecialchars($recordContentRaw); ?></div>
-                                                                                        </details>
-                                                                                    <?php else: ?>
-                                                                                        <span style="word-break:break-all;"><?php echo htmlspecialchars($recordContentRaw); ?></span>
-                                                                                    <?php endif; ?>
-                                                                                </div>
-                                                                                <button type="button" class="btn btn-link btn-sm p-0 ms-2" onclick="copyText('<?php echo htmlspecialchars(addslashes($recordContentRaw)); ?>')" title="<?php echo cfclient_lang('cfclient.subdomains.tooltip.copy', '复制内容', [], true); ?>">
-                                                                                    <i class="fas fa-copy text-primary"></i>
-                                                                                </button>
-                                                                            </div>
-                                                                        </td>
-                                                                        <td>
-                                                                            <span class="text-muted fw-medium"><?php echo intval($r->ttl); ?></span>
-                                                                        </td>
-                                                                        <td>
-                                                                        <?php
-                                                                        $lineKey = 'cfclient.subdomains.line.default';
-                                                                        $ln = strtolower($r->line ?? '');
-                                                                        if ($ln === 'telecom') { $lineKey = 'cfclient.subdomains.line.telecom'; }
-                                                                        elseif ($ln === 'unicom') { $lineKey = 'cfclient.subdomains.line.unicom'; }
-                                                                        elseif ($ln === 'mobile') { $lineKey = 'cfclient.subdomains.line.mobile'; }
-                                                                        elseif ($ln === 'oversea') { $lineKey = 'cfclient.subdomains.line.oversea'; }
-                                                                        elseif ($ln === 'edu') { $lineKey = 'cfclient.subdomains.line.edu'; }
-                                                                        $lineLabel = cfclient_lang($lineKey, '默认', [], true);
-                                                                        ?>
-                                                                        <span class="badge bg-secondary"><?php echo cfclient_lang('cfclient.subdomains.line.prefix', '线路：', [], true); ?><?php echo $lineLabel; ?></span>
-                                                                        </td>
-                                                                        <td>
-                                                                            <div class="btn-group btn-group-sm">
-                                                                                <?php if ($rootInMaintenance): ?>
-                                                                                <button type="button" class="btn btn-outline-secondary" disabled title="<?php echo cfclient_lang('cfclient.subdomains.maintenance.tooltip', '根域名维护中', [], true); ?>"><?php echo cfclient_lang('cfclient.subdomains.details.button.edit', '编辑', [], true); ?></button>
-                                                                                <button type="button" class="btn btn-outline-secondary ms-1" disabled title="<?php echo cfclient_lang('cfclient.subdomains.maintenance.tooltip', '根域名维护中', [], true); ?>"><?php echo cfclient_lang('cfclient.subdomains.details.button.delete', '删除', [], true); ?></button>
-                                                                                <?php else: ?>
-                                                                                <button type="button" class="btn btn-outline-primary" onclick="showDnsForm(<?php echo intval($e->id); ?>, '<?php echo htmlspecialchars($e->subdomain); ?>', true, '<?php echo htmlspecialchars($r->record_id); ?>', '<?php echo htmlspecialchars($recordHostDisplay); ?>', '<?php echo htmlspecialchars($r->type); ?>', '<?php echo htmlspecialchars($r->content); ?>', '<?php echo htmlspecialchars((string) intval($r->ttl ?? 600)); ?>', '<?php echo htmlspecialchars((string) ($r->line ?? 'default')); ?>')"><?php echo cfclient_lang('cfclient.subdomains.details.button.edit', '编辑', [], true); ?></button>
-                                                                                <form method="post" class="ms-1" onsubmit="return confirm('<?php echo cfclient_lang('cfclient.subdomains.confirm.delete_dns', '确定删除该DNS记录？', [], true); ?>');">
-                                                                                    <input type="hidden" name="cfmod_csrf_token" value="<?php echo htmlspecialchars($_SESSION['cfmod_csrf'] ?? ''); ?>">
-                                                                                    <input type="hidden" name="action" value="delete_dns_record">
-                                                                                    <input type="hidden" name="subdomain_id" value="<?php echo intval($e->id); ?>">
-                                                                                    <input type="hidden" name="record_id" value="<?php echo htmlspecialchars($r->record_id); ?>">
-                                                                                    <button type="submit" class="btn btn-outline-danger"><?php echo cfclient_lang('cfclient.subdomains.details.button.delete', '删除', [], true); ?></button>
-                                                                                </form>
-                                                                                <?php endif; ?>
-                                                                            </div>
-                                                                        </td>
-                                                                    </tr>
-                                                                    <?php endforeach; ?>
-                                                                <?php else: ?>
-                                                                    <tr>
-                                                                        <td colspan="6" class="text-center text-muted py-3"><?php echo cfclient_lang('cfclient.subdomains.details.table.empty_page', '当前页暂无记录', [], true); ?></td>
-                                                                    </tr>
-                                                                <?php endif; ?>
-                                                            </tbody>
-                                                        </table>
-                                                        <?php if($dnsPages > 1): ?>
-                                                        <?php
-                                                            $dnsPaginationBase = $_GET;
-                                                            $dnsPaginationBase['m'] = $moduleSlug;
-                                                            $dnsPaginationBase['p'] = $domainPage;
-                                                            if (!empty($filter_type)) { $dnsPaginationBase['filter_type'] = $filter_type; } else { unset($dnsPaginationBase['filter_type']); }
-                                                            if (!empty($filter_name)) { $dnsPaginationBase['filter_name'] = $filter_name; } else { unset($dnsPaginationBase['filter_name']); }
-                                                            $dnsPaginationBase['dns_for'] = intval($e->id);
-                                                            unset($dnsPaginationBase['page']);
-                                                            unset($dnsPaginationBase['dns_page']);
-                                                        ?>
-                                                        <nav aria-label="<?php echo cfclient_lang('cfclient.subdomains.pagination.dns_aria', 'DNS记录分页', [], true); ?>">
-                                                            <ul class="pagination pagination-sm mb-0">
-                                                                <?php if($activeDnsPage > 1): ?>
-                                                                    <?php $prevQuery = $dnsPaginationBase; $prevQuery['dns_page'] = $activeDnsPage - 1; ?>
-                                                                    <li class="page-item">
-                                                                        <a class="page-link" href="?<?php echo htmlspecialchars(http_build_query($prevQuery), ENT_QUOTES); ?>#details_<?php echo intval($e->id); ?>" aria-label="<?php echo cfclient_lang('cfclient.subdomains.pagination.prev', '上一页', [], true); ?>">&laquo;</a>
-                                                                    </li>
-                                                                <?php else: ?>
-                                                                    <li class="page-item disabled"><span class="page-link">&laquo;</span></li>
-                                                                <?php endif; ?>
-                                                                <?php for($i=1;$i<=$dnsPages;$i++): ?>
-                                                                    <?php $dnsQuery = $dnsPaginationBase; $dnsQuery['dns_page'] = $i; ?>
-                                                                    <li class="page-item <?php echo $i === $activeDnsPage ? 'active' : ''; ?>">
-                                                                        <a class="page-link" href="?<?php echo htmlspecialchars(http_build_query($dnsQuery), ENT_QUOTES); ?>#details_<?php echo intval($e->id); ?>"><?php echo $i; ?></a>
-                                                                    </li>
-                                                                <?php endfor; ?>
-                                                                <?php if($activeDnsPage < $dnsPages): ?>
-                                                                    <?php $nextQuery = $dnsPaginationBase; $nextQuery['dns_page'] = $activeDnsPage + 1; ?>
-                                                                    <li class="page-item">
-                                                                        <a class="page-link" href="?<?php echo htmlspecialchars(http_build_query($nextQuery), ENT_QUOTES); ?>#details_<?php echo intval($e->id); ?>" aria-label="<?php echo cfclient_lang('cfclient.subdomains.pagination.next', '下一页', [], true); ?>">&raquo;</a>
-                                                                    </li>
-                                                                <?php else: ?>
-                                                                    <li class="page-item disabled"><span class="page-link">&raquo;</span></li>
-                                                                <?php endif; ?>
-                                                            </ul>
-                                                        </nav>
-                                                        <?php endif; ?>
-                                                    </div>
-                                                <?php else: ?>
-                                                    <div class="text-center text-muted py-3">
-                                                        <i class="fas fa-inbox fa-2x mb-2"></i>
-                                                        <p><?php echo cfclient_lang('cfclient.subdomains.details.empty', '暂无DNS解析记录', [], true); ?></p>
-                                                        <?php if ($rootInMaintenance || $pendingDelete || $isServerHold): ?>
-                                                        <div class="alert alert-warning py-1 px-2 mb-2 small d-inline-block">
-                                                            <i class="fas fa-tools"></i> <?php echo $pendingDelete ? cfclient_lang('cfclient.subdomains.delete.pending', '删除申请已提交，系统稍后会自动处理。', [], true) : ($isServerHold ? cfclient_lang('cfclient.subdomains.server_hold.notice', '此域名处于ServerHold状态，暂时无法进行任何操作。', [], true) : cfclient_lang('cfclient.subdomains.maintenance.notice', '该根域名正在维护中，暂时无法进行DNS操作。', [], true)); ?>
-                                                        </div>
-                                                        <br>
-                                                        <button type="button" class="btn btn-sm btn-secondary" disabled title="<?php echo $pendingDelete ? cfclient_lang('cfclient.subdomains.delete.pending', '删除申请已提交，系统稍后会自动处理。', [], true) : ($isServerHold ? cfclient_lang('cfclient.subdomains.server_hold.tooltip', 'ServerHold 状态，禁止操作', [], true) : cfclient_lang('cfclient.subdomains.maintenance.tooltip', '根域名维护中', [], true)); ?>">
-                                                            <?php echo cfclient_lang('cfclient.subdomains.details.button.add', '立即添加解析记录', [], true); ?>
-                                                        </button>
+                                                <div
+                                                    class="cf-dns-details-container"
+                                                    id="dns_details_container_<?php echo intval($e->id); ?>"
+                                                    data-subdomain-id="<?php echo intval($e->id); ?>"
+                                                    data-subdomain-name="<?php echo htmlspecialchars((string) $e->subdomain, ENT_QUOTES); ?>"
+                                                    data-total-records="<?php echo intval($totalRecords); ?>"
+                                                    data-root-maintenance="<?php echo $rootInMaintenance ? '1' : '0'; ?>"
+                                                    data-pending-delete="<?php echo $pendingDelete ? '1' : '0'; ?>"
+                                                    data-server-hold="<?php echo $isServerHold ? '1' : '0'; ?>"
+                                                    data-root-ns-disabled="<?php echo $rootNsDisabled ? '1' : '0'; ?>"
+                                                    data-can-delete="<?php echo ($canDisplayDelete && !$isServerHold) ? '1' : '0'; ?>"
+                                                    data-delete-locked="<?php echo $deleteLocked ? '1' : '0'; ?>"
+                                                    data-delete-confirm="<?php echo $deleteConfirmAttr; ?>"
+                                                >
+                                                    <div class="text-center text-muted py-3 cf-dns-lazy-placeholder">
+                                                        <i class="fas fa-spinner fa-spin fa-2x mb-2 d-none cf-dns-loading-icon"></i>
+                                                        <i class="fas fa-database fa-2x mb-2 cf-dns-idle-icon"></i>
+                                                        <p class="mb-2">
+                                                            <?php echo $totalRecords > 0
+                                                                ? cfclient_lang('cfclient.subdomains.details.lazy_hint', '点击“查看详情”后加载 DNS 解析记录。', [], true)
+                                                                : cfclient_lang('cfclient.subdomains.details.empty', '暂无DNS解析记录', [], true); ?>
+                                                        </p>
+                                                        <?php if ($detailsDisabled): ?>
+                                                            <div class="alert alert-warning py-1 px-2 mb-2 small d-inline-block">
+                                                                <i class="fas fa-tools"></i> <?php echo $detailsDisabledMessage; ?>
+                                                            </div>
+                                                            <br>
+                                                            <button type="button" class="btn btn-sm btn-secondary" disabled title="<?php echo htmlspecialchars($detailsDisabledMessage, ENT_QUOTES); ?>">
+                                                                <?php echo cfclient_lang('cfclient.subdomains.details.button.add', '立即添加解析记录', [], true); ?>
+                                                            </button>
                                                         <?php else: ?>
-                                                        <button type="button" class="btn btn-sm btn-primary"
-                                                                onclick="showDnsForm(<?php echo intval($e->id); ?>, '<?php echo htmlspecialchars($e->subdomain); ?>', false)">
-                                                            <?php echo cfclient_lang('cfclient.subdomains.details.button.add', '立即添加解析记录', [], true); ?>
-                                                        </button>
-                                                        <?php endif; ?>
-                                                        <?php if ($canDisplayDelete && !$isServerHold): ?>
-                                                            <?php if ($pendingDelete): ?>
-                                                                <button type="button" class="btn btn-sm btn-outline-secondary ms-2" disabled>
-                                                                    <i class="fas fa-clock"></i> <?php echo cfclient_lang('cfclient.subdomains.delete.pending_short', '已提交，待清理', [], true); ?>
-                                                                </button>
-                                                            <?php elseif ($deleteLocked): ?>
-                                                                <button type="button" class="btn btn-sm btn-outline-secondary ms-2" disabled>
-                                                                    <i class="fas fa-lock"></i> <?php echo cfclient_lang('cfclient.subdomains.delete.disabled_gift_short', '锁定中，暂不可删', [], true); ?>
-                                                                </button>
-                                                            <?php else: ?>
-                                                                <form method="post" class="d-inline-block ms-2" onsubmit="return confirm('<?php echo $deleteConfirmAttr; ?>');">
-                                                                    <input type="hidden" name="cfmod_csrf_token" value="<?php echo htmlspecialchars($_SESSION['cfmod_csrf'] ?? ''); ?>">
-                                                                    <input type="hidden" name="action" value="delete_subdomain">
-                                                                    <input type="hidden" name="subdomain_id" value="<?php echo intval($e->id); ?>">
-                                                                    <button type="submit" class="btn btn-sm btn-outline-danger">
-                                                                        <i class="fas fa-trash-alt"></i> <?php echo cfclient_lang('cfclient.subdomains.delete.button', '删除域名', [], true); ?>
-                                                                    </button>
-                                                                </form>
-                                                            <?php endif; ?>
+                                                            <button type="button" class="btn btn-sm btn-primary"
+                                                                    onclick="showDnsForm(<?php echo intval($e->id); ?>, '<?php echo htmlspecialchars((string) $e->subdomain, ENT_QUOTES); ?>', false)">
+                                                                <?php echo cfclient_lang('cfclient.subdomains.details.button.add', '立即添加解析记录', [], true); ?>
+                                                            </button>
                                                         <?php endif; ?>
                                                     </div>
-                                                <?php endif; ?>
+                                                </div>
 
                                                 <?php if ($clientDeleteEnabled): ?>
                                                     <?php if ($canDisplayDelete && !$isServerHold): ?>

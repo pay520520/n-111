@@ -395,7 +395,7 @@ const dnsUnlockRequired = dnsUnlockFeatureEnabled && <?php echo !empty($dnsUnloc
             }
         }
 
-		        function showDnsForm(subdomainId, subdomainName, isUpdate, recordId = '', recordName = '', recordType = '', recordContent = '', recordTtl = '', recordLine = '') {
+		        function showDnsForm(subdomainId, subdomainName, isUpdate, recordId = '', recordName = '', recordType = '', recordContent = '', recordTtl = '', recordLine = '', localRecordId = '') {
             const inlineAlert = document.getElementById('dns_external_block_alert');
             if (inlineAlert) {
                 setModalAlertState(inlineAlert, '');
@@ -407,6 +407,8 @@ const dnsUnlockRequired = dnsUnlockFeatureEnabled && <?php echo !empty($dnsUnloc
             document.getElementById('dns_record_suffix').textContent = subdomainName;
             document.getElementById('dns_record_name').value = recordName || '';
             document.getElementById('dns_record_id').value = recordId;
+            const dnsFormEl = document.getElementById('dnsForm');
+            if (dnsFormEl) { dnsFormEl.dataset.localRecordId = String(localRecordId || ''); }
             document.getElementById('dns_action').value = isUpdate ? 'update_dns' : 'create_dns';
             const lineSel = document.querySelector('select[name="line"]');
             const normalizeDnsLineValue = function (value) {
@@ -1017,6 +1019,167 @@ document.getElementById('nsForm')?.addEventListener('submit', function(e){
             ta.value = cleaned.join('\n');
         });
 
+        const cfDnsDetailsCache = window.__cfDnsDetailsCache || (window.__cfDnsDetailsCache = {});
+        function cfDnsEscapeHtml(value) {
+            return String(value == null ? '' : value).replace(/[&<>"']/g, function(ch) {
+                return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch];
+            });
+        }
+        function cfDnsEscapeJsArg(value) {
+            return String(value == null ? '' : value).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+        }
+        function cfDnsRecordHost(recordName, subdomainName) {
+            var name = String(recordName || '').replace(/\.$/, '');
+            var sub = String(subdomainName || '').replace(/\.$/, '');
+            if (!name || name === '@' || name.toLowerCase() === sub.toLowerCase()) { return '@'; }
+            var suffix = '.' + sub.toLowerCase();
+            if (sub && name.toLowerCase().slice(-suffix.length) === suffix) {
+                var host = name.slice(0, Math.max(0, name.length - suffix.length));
+                return host || '@';
+            }
+            return name;
+        }
+        function cfDnsLineLabel(line) {
+            var key = String(line || '').toLowerCase();
+            var map = {
+                telecom: cfLang('cfclient.subdomains.line.telecom', '电信'),
+                unicom: cfLang('cfclient.subdomains.line.unicom', '联通'),
+                mobile: cfLang('cfclient.subdomains.line.mobile', '移动'),
+                oversea: cfLang('cfclient.subdomains.line.oversea', '海外'),
+                edu: cfLang('cfclient.subdomains.line.edu', '教育网')
+            };
+            return map[key] || cfLang('cfclient.subdomains.line.default', '默认');
+        }
+        function cfDnsRenderContent(content) {
+            var raw = String(content == null ? '' : content);
+            if (raw.length <= 72) {
+                return '<span style="word-break:break-all;">' + cfDnsEscapeHtml(raw) + '</span>';
+            }
+            var preview = raw.slice(0, 24) + '...' + raw.slice(-20);
+            return '<details><summary style="cursor:pointer;word-break:break-all;">' + cfDnsEscapeHtml(preview) + '</summary><div class="mt-1" style="word-break:break-all;white-space:pre-wrap;">' + cfDnsEscapeHtml(raw) + '</div></details>';
+        }
+        function cfDnsBuildActionHtml(container, rec, host) {
+            var sid = String(container.getAttribute('data-subdomain-id') || '0');
+            var subdomain = String(container.getAttribute('data-subdomain-name') || '');
+            var disabled = container.getAttribute('data-root-maintenance') === '1' || container.getAttribute('data-pending-delete') === '1' || container.getAttribute('data-server-hold') === '1';
+            if (disabled) {
+                var title = container.getAttribute('data-server-hold') === '1'
+                    ? cfLang('cfclient.subdomains.server_hold.tooltip', 'ServerHold 状态，禁止操作')
+                    : (container.getAttribute('data-pending-delete') === '1' ? cfLang('cfclient.subdomains.delete.pending', '删除申请已提交，系统稍后会自动处理。') : cfLang('cfclient.subdomains.maintenance.tooltip', '根域名维护中'));
+                return '<div class="btn-group btn-group-sm"><button type="button" class="btn btn-outline-secondary" disabled title="' + cfDnsEscapeHtml(title) + '">' + cfDnsEscapeHtml(cfLang('cfclient.subdomains.details.button.edit', '编辑')) + '</button><button type="button" class="btn btn-outline-secondary ms-1" disabled title="' + cfDnsEscapeHtml(title) + '">' + cfDnsEscapeHtml(cfLang('cfclient.subdomains.details.button.delete', '删除')) + '</button></div>';
+            }
+            var edit = "showDnsForm(" + parseInt(sid, 10) + ", '" + cfDnsEscapeJsArg(subdomain) + "', true, '" + cfDnsEscapeJsArg(rec.record_id || '') + "', '" + cfDnsEscapeJsArg(host) + "', '" + cfDnsEscapeJsArg(rec.type || '') + "', '" + cfDnsEscapeJsArg(rec.content || '') + "', '" + cfDnsEscapeJsArg(String(rec.ttl || 600)) + "', '" + cfDnsEscapeJsArg(rec.line || 'default') + "', '" + cfDnsEscapeJsArg(String(rec.id || '')) + "')";
+            return '<div class="btn-group btn-group-sm"><button type="button" class="btn btn-outline-primary" onclick="' + cfDnsEscapeHtml(edit) + '">' + cfDnsEscapeHtml(cfLang('cfclient.subdomains.details.button.edit', '编辑')) + '</button>' +
+                '<form method="post" class="ms-1" onsubmit="return confirm(\'' + cfDnsEscapeJsArg(cfLang('cfclient.subdomains.confirm.delete_dns', '确定删除该DNS记录？')) + '\');">' +
+                '<input type="hidden" name="cfmod_csrf_token" value="' + cfDnsEscapeHtml(window.CF_MOD_CSRF || '') + '">' +
+                '<input type="hidden" name="action" value="delete_dns_record"><input type="hidden" name="subdomain_id" value="' + cfDnsEscapeHtml(sid) + '">' +
+                '<input type="hidden" name="record_id" value="' + cfDnsEscapeHtml(rec.record_id || '') + '">' +
+                '<button type="submit" class="btn btn-outline-danger">' + cfDnsEscapeHtml(cfLang('cfclient.subdomains.details.button.delete', '删除')) + '</button></form></div>';
+        }
+        function cfDnsRenderDetails(container, data) {
+            var subdomain = String((data && data.subdomain) || container.getAttribute('data-subdomain-name') || '');
+            var records = Array.isArray(data && data.records) ? data.records : [];
+            var pagination = (data && data.pagination) || {};
+            var total = parseInt(pagination.total || records.length || 0, 10);
+            if (data && data.state) {
+                container.setAttribute('data-root-maintenance', data.state.root_maintenance ? '1' : '0');
+                container.setAttribute('data-pending-delete', data.state.pending_delete ? '1' : '0');
+                container.setAttribute('data-server-hold', data.state.server_hold ? '1' : '0');
+                container.setAttribute('data-root-ns-disabled', data.state.root_ns_disabled ? '1' : '0');
+            }
+            container.setAttribute('data-total-records', String(total));
+            var rootNsDisabled = container.getAttribute('data-root-ns-disabled') === '1';
+            var rows = '';
+            var visibleRecords = records.filter(function(rec){ return !(rootNsDisabled && String(rec.type || '').toUpperCase() === 'NS'); });
+            if (visibleRecords.length > 0) {
+                visibleRecords.forEach(function(rec) {
+                    var host = cfDnsRecordHost(rec.name, subdomain);
+                    rows += '<tr>' +
+                        '<td><span class="dns-record-name">' + (host === '@' ? '<span class="badge bg-primary fs-6 fw-bold">@</span>' : '<span class="dns-name-text">' + cfDnsEscapeHtml(host) + '</span>') + '</span></td>' +
+                        '<td><span class="badge bg-info text-dark">' + cfDnsEscapeHtml(rec.type || '') + '</span></td>' +
+                        '<td><div class="d-flex align-items-start"><div class="text-dark fw-medium" style="max-width:560px;">' + cfDnsRenderContent(rec.content || '') + '</div><button type="button" class="btn btn-link btn-sm p-0 ms-2" onclick="copyText(\'' + cfDnsEscapeJsArg(rec.content || '') + '\')" title="' + cfDnsEscapeHtml(cfLang('cfclient.subdomains.tooltip.copy', '复制内容')) + '"><i class="fas fa-copy text-primary"></i></button></div></td>' +
+                        '<td><span class="text-muted fw-medium">' + parseInt(rec.ttl || 600, 10) + '</span></td>' +
+                        '<td><span class="badge bg-secondary">' + cfDnsEscapeHtml(cfLang('cfclient.subdomains.line.prefix', '线路：')) + cfDnsEscapeHtml(cfDnsLineLabel(rec.line)) + '</span></td>' +
+                        '<td>' + cfDnsBuildActionHtml(container, rec, host) + '</td>' +
+                        '</tr>';
+                });
+            } else {
+                rows = '<tr><td colspan="6" class="text-center text-muted py-3">' + cfDnsEscapeHtml(total > 0 ? cfLang('cfclient.subdomains.details.table.empty_page', '当前页暂无记录') : cfLang('cfclient.subdomains.details.empty', '暂无DNS解析记录')) + '</td></tr>';
+            }
+            var html = '<div class="table-responsive"><table class="table table-sm table-bordered"><thead class="table-light"><tr>' +
+                '<th class="text-dark fw-bold">' + cfDnsEscapeHtml(cfLang('cfclient.subdomains.details.table.name', '名称')) + '</th>' +
+                '<th class="text-dark fw-bold">' + cfDnsEscapeHtml(cfLang('cfclient.subdomains.details.table.type', '类型')) + '</th>' +
+                '<th class="text-dark fw-bold">' + cfDnsEscapeHtml(cfLang('cfclient.subdomains.details.table.content', '内容')) + '</th>' +
+                '<th class="text-dark fw-bold">TTL</th>' +
+                '<th class="text-dark fw-bold">' + cfDnsEscapeHtml(cfLang('cfclient.subdomains.details.table.line', '线路')) + '</th>' +
+                '<th class="text-dark fw-bold">' + cfDnsEscapeHtml(cfLang('cfclient.subdomains.details.table.actions', '操作')) + '</th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table>';
+            var page = parseInt(pagination.page || 1, 10);
+            var totalPages = parseInt(pagination.total_pages || 1, 10);
+            if (totalPages > 1) {
+                html += '<nav aria-label="' + cfDnsEscapeHtml(cfLang('cfclient.subdomains.pagination.dns_aria', 'DNS记录分页')) + '"><ul class="pagination pagination-sm mb-0">';
+                html += '<li class="page-item ' + (page <= 1 ? 'disabled' : '') + '"><a class="page-link" href="#" data-dns-details-page="' + Math.max(1, page - 1) + '">&laquo;</a></li>';
+                for (var i = 1; i <= totalPages; i++) {
+                    html += '<li class="page-item ' + (i === page ? 'active' : '') + '"><a class="page-link" href="#" data-dns-details-page="' + i + '">' + i + '</a></li>';
+                }
+                html += '<li class="page-item ' + (page >= totalPages ? 'disabled' : '') + '"><a class="page-link" href="#" data-dns-details-page="' + Math.min(totalPages, page + 1) + '">&raquo;</a></li></ul></nav>';
+            }
+            html += '</div>';
+            var disabled = container.getAttribute('data-root-maintenance') === '1' || container.getAttribute('data-pending-delete') === '1' || container.getAttribute('data-server-hold') === '1';
+            if (!disabled) {
+                html += '<div class="mt-2"><button type="button" class="btn btn-sm btn-primary" onclick="showDnsForm(' + parseInt(container.getAttribute('data-subdomain-id') || '0', 10) + ", '" + cfDnsEscapeJsArg(subdomain) + "', false)">" + cfDnsEscapeHtml(cfLang('cfclient.subdomains.details.button.add', '立即添加解析记录')) + '</button></div>';
+            }
+            container.innerHTML = html;
+        }
+        function cfDnsLoadDetails(subdomainId, page, force) {
+            page = Math.max(1, parseInt(page || 1, 10));
+            var container = document.getElementById('dns_details_container_' + subdomainId);
+            if (!container) { return Promise.resolve(false); }
+            var cacheKey = String(subdomainId) + ':' + page;
+            if (!force && cfDnsDetailsCache[cacheKey]) {
+                cfDnsRenderDetails(container, cfDnsDetailsCache[cacheKey]);
+                return Promise.resolve(true);
+            }
+            container.innerHTML = '<div class="text-center text-muted py-3"><i class="fas fa-spinner fa-spin fa-2x mb-2"></i><p>' + cfDnsEscapeHtml(cfLang('cfclient.subdomains.details.loading', 'DNS记录加载中...')) + '</p></div>';
+            return fetch(cfClientBuildModuleUrl('ajax_load_dns_records'), {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-CSRF-Token': window.CF_MOD_CSRF || ''},
+                body: JSON.stringify({subdomain_id: subdomainId, page: page, page_size: <?php echo intval($dnsPageSize ?? 20); ?>, filter_type: <?php echo json_encode((string) ($filter_type ?? ''), CFMOD_SAFE_JSON_FLAGS); ?>, filter_name: <?php echo json_encode((string) ($filter_name ?? ''), CFMOD_SAFE_JSON_FLAGS); ?>})
+            }).then(function(r){ return r.json(); }).then(function(res){
+                if (!res || !res.success || !res.data) { throw new Error((res && res.error) ? res.error : cfLang('cfclient.subdomains.details.load_failed', 'DNS记录加载失败')); }
+                cfDnsDetailsCache[cacheKey] = res.data;
+                if (!window.__recordsBySubId) { window.__recordsBySubId = {}; }
+                window.__recordsBySubId[subdomainId] = Array.isArray(res.data.records) ? res.data.records : [];
+                cfDnsRenderDetails(container, res.data);
+                return true;
+            }).catch(function(err){
+                container.innerHTML = '<div class="alert alert-danger mb-0">' + cfDnsEscapeHtml(err && err.message ? err.message : cfLang('networkError', '网络异常，请稍后再试')) + '</div>';
+                return false;
+            });
+        }
+        function cfDnsSubmitAfterValidation(form) {
+            try { const btn = form.querySelector('button[type="submit"]'); if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + cfLang('buttonSaving', '保存中...'); } } catch(err) {}
+            form.dataset.cnameConflictChecked = '1';
+            if (typeof form.requestSubmit === 'function') { form.requestSubmit(); } else { form.submit(); }
+        }
+        function cfDnsCheckCnameConflictRemote(form, subdomainId, recordName, recordType, recordId, localRecordId) {
+            return fetch(cfClientBuildModuleUrl('ajax_check_dns_cname_conflict'), {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-CSRF-Token': window.CF_MOD_CSRF || ''},
+                body: JSON.stringify({subdomain_id: subdomainId, record_name: recordName || '@', record_type: recordType || '', record_id: recordId || '', id: localRecordId || ''})
+            }).then(function(r){ return r.json(); }).then(function(res){
+                if (!res || !res.success || !res.data) { throw new Error((res && res.error) ? res.error : cfLang('cfclient.subdomains.details.conflict_check_failed', 'CNAME冲突检查失败')); }
+                if (res.data.conflict) {
+                    alert(res.data.message || cfLang('cnameMutexConflict', dnsUiIsChinese ? '同名记录与CNAME互斥' : 'CNAME conflict for the same host'));
+                    return false;
+                }
+                return true;
+            }).catch(function(err){
+                alert(err && err.message ? err.message : cfLang('networkError', '网络异常，请稍后再试'));
+                return false;
+            });
+        }
+
         const dnsUiIsChinese = <?php echo $modalIsChinese ? 'true' : 'false'; ?>;
         // DNS表单验证
         document.getElementById('dnsForm').addEventListener('submit', function(e) {
@@ -1162,17 +1325,26 @@ recordContent.focus();
 return;
 }
 const localRecordsMap = window.__recordsBySubId || {};
-const localRecords = Array.isArray(localRecordsMap[subIdForDnsForm]) ? localRecordsMap[subIdForDnsForm] : [];
+const localBundle = localRecordsMap[subIdForDnsForm];
+const localRecords = Array.isArray(localBundle) ? localBundle : ((localBundle && Array.isArray(localBundle.items)) ? localBundle.items : []);
+const currentRecordId = String((document.getElementById('dns_record_id')?.value || '')).trim();
+const currentLocalRecordId = String((this.dataset.localRecordId || '')).trim();
 const hostInputRaw = recordNameInput ? String(recordNameInput.value || '').trim() : '@';
 const hostInput = hostInputRaw === '' ? '@' : hostInputRaw;
 const fullHost = hostInput === '@'
     ? String(document.getElementById('dns_subdomain_name')?.value || '').trim().toLowerCase()
     : (hostInput + '.' + String(document.getElementById('dns_subdomain_name')?.value || '').trim()).toLowerCase();
 if (fullHost) {
-const hasCnameSameName = localRecords.some(function(rec){
+const comparableRecords = localRecords.filter(function(rec){
+    const rid = String(rec.record_id || '').trim();
+    const lid = String(rec.id || '').trim();
+    if (currentLocalRecordId && lid && lid === currentLocalRecordId) { return false; }
+    return !currentRecordId || !rid || rid !== currentRecordId;
+});
+const hasCnameSameName = comparableRecords.some(function(rec){
     return String(rec.name || '').trim().toLowerCase() === fullHost && String(rec.type || '').trim().toUpperCase() === 'CNAME';
 });
-const hasNonCnameSameName = localRecords.some(function(rec){
+const hasNonCnameSameName = comparableRecords.some(function(rec){
     return String(rec.name || '').trim().toLowerCase() === fullHost && String(rec.type || '').trim().toUpperCase() !== 'CNAME';
 });
 if (type === 'CNAME' && hasNonCnameSameName) {
@@ -1185,6 +1357,15 @@ if (type !== 'CNAME' && hasCnameSameName) {
     alert(cfLang('cnameMutexConflict', dnsUiIsChinese ? '同名已存在CNAME记录，不能新增其他类型记录' : 'A CNAME record with the same name already exists, so another type cannot be added'));
     return;
 }
+}
+if (this.dataset.cnameConflictChecked === '1') {
+    delete this.dataset.cnameConflictChecked;
+} else {
+    e.preventDefault();
+    cfDnsCheckCnameConflictRemote(this, subIdForDnsForm, hostInput, type, currentRecordId, currentLocalRecordId).then(function(ok){
+        if (ok) { cfDnsSubmitAfterValidation(document.getElementById('dnsForm')); }
+    });
+    return;
 }
 // 防连点：提交后禁用按钮
 try { const btn = this.querySelector('button[type="submit"]'); if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + cfLang('buttonSaving', '保存中...'); } } catch(err) {}
@@ -1410,6 +1591,7 @@ document.querySelector('select[name="record_type"]')?.dispatchEvent(new Event('c
                 var detailsRow = document.getElementById('details_' + dnsForParam);
                 if (detailsRow) {
                     detailsRow.style.display = 'table-row';
+                    cfDnsLoadDetails(dnsForParam, <?php echo max(1, intval($dnsPage)); ?>, false);
                     setTimeout(function(){
                         try { detailsRow.scrollIntoView({behavior: 'smooth', block: 'start'}); } catch (err) {}
                     }, 150);
@@ -2484,11 +2666,22 @@ document.querySelector('select[name="record_type"]')?.dispatchEvent(new Event('c
             if (detailsRow) {
                 if (detailsRow.style.display === 'none') {
                     detailsRow.style.display = 'table-row';
+                    cfDnsLoadDetails(subdomainId, 1, false);
                 } else {
                     detailsRow.style.display = 'none';
                 }
             }
         }
+        document.addEventListener('click', function(e) {
+            var link = e.target && e.target.closest ? e.target.closest('[data-dns-details-page]') : null;
+            if (!link) { return; }
+            e.preventDefault();
+            var container = link.closest('.cf-dns-details-container');
+            if (!container) { return; }
+            var sid = parseInt(container.getAttribute('data-subdomain-id') || '0', 10);
+            var page = parseInt(link.getAttribute('data-dns-details-page') || '1', 10);
+            if (sid > 0) { cfDnsLoadDetails(sid, page, false); }
+        });
         
         // 控制消息提示的显示
         function dismissMessage() {

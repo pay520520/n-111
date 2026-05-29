@@ -727,6 +727,9 @@ class CfClientViewModelBuilder
                     'page_size' => $dnsFilter['dnsPageSize'],
                     'dns_page' => $dnsFilter['dnsPage'],
                     'dns_page_for' => $dnsFilter['dnsPageFor'],
+                    // Keep lightweight totals/NS summaries on first paint, but defer
+                    // per-subdomain DNS rows until the user expands a details panel.
+                    'load_records' => false,
                 ]
             );
         }
