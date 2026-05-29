@@ -1,0 +1,322 @@
+++ date '+%F %T'
++ echo '==== 2026-04-29 11:05:21 START ===='
+==== 2026-04-29 11:05:21 START ====
++ whoami
+root
++ id
+uid=0(root) gid=0(root) groups=0(root)
++ pwd
+/root
+++ /www/server/php/74/bin/php -v
+++ head -n 1
++ echo 'PHP: PHP 7.4.33 (cli) (built: Sep  8 2025 10:32:59) ( NTS )'
+PHP: PHP 7.4.33 (cli) (built: Sep  8 2025 10:32:59) ( NTS )
++ echo MODULES:
+MODULES:
++ /www/server/php/74/bin/php -m
++ egrep -i 'pdo|mysql|ioncube'
+ionCube Loader
+mysqli
+mysqlnd
+PDO
+pdo_mysql
+pdo_sqlite
+the ionCube PHP Loader + ionCube24
++ cd /www/wwwroot/my.dnshe.com
++ /www/server/php/74/bin/php -d display_errors=1 -d error_reporting=32767 -r '
+chdir('\''/www/wwwroot/my.dnshe.com'\'');
+require '\''init.php'\'';
+echo '\''init_ok'\''.PHP_EOL;
+require '\''modules/addons/domain_hub/worker.php'\'';
+echo '\''worker_loaded'\''.PHP_EOL;
+echo '\''run_fn='\''.(function_exists('\''run_cf_queue_once'\'')?'\''yes'\'':'\''no'\'').PHP_EOL;
+'
+init_ok
+worker_loaded
+run_fn=yes
++ /www/server/php/74/bin/php -d display_errors=1 -d error_reporting=32767 /www/wwwroot/my.dnshe.com/modules/addons/domain_hub/worker.php 5
++ echo exit_code=0
+exit_code=0
++ ls -l /tmp/domain_hub_worker.lock
+-rw-r--r-- 1 root root 0 Apr 28 15:42 /tmp/domain_hub_worker.lock
++ lsof /tmp/domain_hub_worker.lock
++ true
+++ date '+%F %T'
++ echo '==== 2026-04-29 11:05:22 END ===='
+==== 2026-04-29 11:05:22 END ====
+++ date '+%F %T'
++ echo '==== 2026-04-29 11:10:01 START ===='
+==== 2026-04-29 11:10:01 START ====
++ whoami
+root
++ id
+uid=0(root) gid=0(root) groups=0(root)
++ pwd
+/root
+++ /www/server/php/74/bin/php -v
+++ head -n 1
++ echo 'PHP: PHP 7.4.33 (cli) (built: Sep  8 2025 10:32:59) ( NTS )'
+PHP: PHP 7.4.33 (cli) (built: Sep  8 2025 10:32:59) ( NTS )
++ echo MODULES:
+MODULES:
++ /www/server/php/74/bin/php -m
++ egrep -i 'pdo|mysql|ioncube'
+ionCube Loader
+mysqli
+mysqlnd
+PDO
+pdo_mysql
+pdo_sqlite
+the ionCube PHP Loader + ionCube24
++ cd /www/wwwroot/my.dnshe.com
++ /www/server/php/74/bin/php -d display_errors=1 -d error_reporting=32767 -r '
+chdir('\''/www/wwwroot/my.dnshe.com'\'');
+require '\''init.php'\'';
+echo '\''init_ok'\''.PHP_EOL;
+require '\''modules/addons/domain_hub/worker.php'\'';
+echo '\''worker_loaded'\''.PHP_EOL;
+echo '\''run_fn='\''.(function_exists('\''run_cf_queue_once'\'')?'\''yes'\'':'\''no'\'').PHP_EOL;
+'
+init_ok
+worker_loaded
+run_fn=yes
++ /www/server/php/74/bin/php -d display_errors=1 -d error_reporting=32767 /www/wwwroot/my.dnshe.com/modules/addons/domain_hub/worker.php 5
++ echo exit_code=0
+exit_code=0
++ ls -l /tmp/domain_hub_worker.lock
+-rw-r--r-- 1 root root 0 Apr 28 15:42 /tmp/domain_hub_worker.lock
++ lsof /tmp/domain_hub_worker.lock
++ true
+++ date '+%F %T'
++ echo '==== 2026-04-29 11:10:02 END ===='
+==== 2026-04-29 11:10:02 END ====
+++ date '+%F %T'
++ echo '==== 2026-04-29 11:15:01 START ===='
+==== 2026-04-29 11:15:01 START ====
++ whoami
+root
++ id
+uid=0(root) gid=0(root) groups=0(root)
++ pwd
+/root
+++ /www/server/php/74/bin/php -v
+++ head -n 1
++ echo 'PHP: PHP 7.4.33 (cli) (built: Sep  8 2025 10:32:59) ( NTS )'
+PHP: PHP 7.4.33 (cli) (built: Sep  8 2025 10:32:59) ( NTS )
++ echo MODULES:
+MODULES:
++ egrep -i 'pdo|mysql|ioncube'
++ /www/server/php/74/bin/php -m
+ionCube Loader
+mysqli
+mysqlnd
+PDO
+pdo_mysql
+pdo_sqlite
+the ionCube PHP Loader + ionCube24
++ cd /www/wwwroot/my.dnshe.com
++ /www/server/php/74/bin/php -d display_errors=1 -d error_reporting=32767 -r '
+chdir('\''/www/wwwroot/my.dnshe.com'\'');
+require '\''init.php'\'';
+echo '\''init_ok'\''.PHP_EOL;
+require '\''modules/addons/domain_hub/worker.php'\'';
+echo '\''worker_loaded'\''.PHP_EOL;
+echo '\''run_fn='\''.(function_exists('\''run_cf_queue_once'\'')?'\''yes'\'':'\''no'\'').PHP_EOL;
+'
+init_ok
+worker_loaded
+run_fn=yes
++ /www/server/php/74/bin/php -d display_errors=1 -d error_reporting=32767 /www/wwwroot/my.dnshe.com/modules/addons/domain_hub/worker.php 5
++ echo exit_code=0
+exit_code=0
++ ls -l /tmp/domain_hub_worker.lock
+-rw-r--r-- 1 root root 0 Apr 28 15:42 /tmp/domain_hub_worker.lock
++ lsof /tmp/domain_hub_worker.lock
++ true
+++ date '+%F %T'
++ echo '==== 2026-04-29 11:15:01 END ===='
+==== 2026-04-29 11:15:01 END ====
+++ date '+%F %T'
++ echo '==== 2026-04-29 11:20:01 START ===='
+==== 2026-04-29 11:20:01 START ====
++ whoami
+root
++ id
+uid=0(root) gid=0(root) groups=0(root)
++ pwd
+/root
+++ head -n 1
+++ /www/server/php/74/bin/php -v
++ echo 'PHP: PHP 7.4.33 (cli) (built: Sep  8 2025 10:32:59) ( NTS )'
+PHP: PHP 7.4.33 (cli) (built: Sep  8 2025 10:32:59) ( NTS )
++ echo MODULES:
+MODULES:
++ /www/server/php/74/bin/php -m
++ egrep -i 'pdo|mysql|ioncube'
+ionCube Loader
+mysqli
+mysqlnd
+PDO
+pdo_mysql
+pdo_sqlite
+the ionCube PHP Loader + ionCube24
++ cd /www/wwwroot/my.dnshe.com
++ /www/server/php/74/bin/php -d display_errors=1 -d error_reporting=32767 -r '
+chdir('\''/www/wwwroot/my.dnshe.com'\'');
+require '\''init.php'\'';
+echo '\''init_ok'\''.PHP_EOL;
+require '\''modules/addons/domain_hub/worker.php'\'';
+echo '\''worker_loaded'\''.PHP_EOL;
+echo '\''run_fn='\''.(function_exists('\''run_cf_queue_once'\'')?'\''yes'\'':'\''no'\'').PHP_EOL;
+'
+init_ok
+worker_loaded
+run_fn=yes
++ /www/server/php/74/bin/php -d display_errors=1 -d error_reporting=32767 /www/wwwroot/my.dnshe.com/modules/addons/domain_hub/worker.php 5
++ echo exit_code=0
+exit_code=0
++ ls -l /tmp/domain_hub_worker.lock
+-rw-r--r-- 1 root root 0 Apr 28 15:42 /tmp/domain_hub_worker.lock
++ lsof /tmp/domain_hub_worker.lock
++ true
+++ date '+%F %T'
++ echo '==== 2026-04-29 11:20:02 END ===='
+==== 2026-04-29 11:20:02 END ====
+++ date '+%F %T'
++ echo '==== 2026-04-29 11:25:01 START ===='
+==== 2026-04-29 11:25:01 START ====
++ whoami
+root
++ id
+uid=0(root) gid=0(root) groups=0(root)
++ pwd
+/root
+++ /www/server/php/74/bin/php -v
+++ head -n 1
++ echo 'PHP: PHP 7.4.33 (cli) (built: Sep  8 2025 10:32:59) ( NTS )'
+PHP: PHP 7.4.33 (cli) (built: Sep  8 2025 10:32:59) ( NTS )
++ echo MODULES:
+MODULES:
++ egrep -i 'pdo|mysql|ioncube'
++ /www/server/php/74/bin/php -m
+ionCube Loader
+mysqli
+mysqlnd
+PDO
+pdo_mysql
+pdo_sqlite
+the ionCube PHP Loader + ionCube24
++ cd /www/wwwroot/my.dnshe.com
++ /www/server/php/74/bin/php -d display_errors=1 -d error_reporting=32767 -r '
+chdir('\''/www/wwwroot/my.dnshe.com'\'');
+require '\''init.php'\'';
+echo '\''init_ok'\''.PHP_EOL;
+require '\''modules/addons/domain_hub/worker.php'\'';
+echo '\''worker_loaded'\''.PHP_EOL;
+echo '\''run_fn='\''.(function_exists('\''run_cf_queue_once'\'')?'\''yes'\'':'\''no'\'').PHP_EOL;
+'
+init_ok
+worker_loaded
+run_fn=yes
++ /www/server/php/74/bin/php -d display_errors=1 -d error_reporting=32767 /www/wwwroot/my.dnshe.com/modules/addons/domain_hub/worker.php 5
++ echo exit_code=0
+exit_code=0
++ ls -l /tmp/domain_hub_worker.lock
+-rw-r--r-- 1 root root 0 Apr 28 15:42 /tmp/domain_hub_worker.lock
++ lsof /tmp/domain_hub_worker.lock
++ true
+++ date '+%F %T'
++ echo '==== 2026-04-29 11:25:02 END ===='
+==== 2026-04-29 11:25:02 END ====
+++ date '+%F %T'
++ echo '==== 2026-04-29 11:30:01 START ===='
+==== 2026-04-29 11:30:01 START ====
++ whoami
+root
++ id
+uid=0(root) gid=0(root) groups=0(root)
++ pwd
+/root
+++ /www/server/php/74/bin/php -v
+++ head -n 1
++ echo 'PHP: PHP 7.4.33 (cli) (built: Sep  8 2025 10:32:59) ( NTS )'
+PHP: PHP 7.4.33 (cli) (built: Sep  8 2025 10:32:59) ( NTS )
++ echo MODULES:
+MODULES:
++ /www/server/php/74/bin/php -m
++ egrep -i 'pdo|mysql|ioncube'
+ionCube Loader
+mysqli
+mysqlnd
+PDO
+pdo_mysql
+pdo_sqlite
+the ionCube PHP Loader + ionCube24
++ cd /www/wwwroot/my.dnshe.com
++ /www/server/php/74/bin/php -d display_errors=1 -d error_reporting=32767 -r '
+chdir('\''/www/wwwroot/my.dnshe.com'\'');
+require '\''init.php'\'';
+echo '\''init_ok'\''.PHP_EOL;
+require '\''modules/addons/domain_hub/worker.php'\'';
+echo '\''worker_loaded'\''.PHP_EOL;
+echo '\''run_fn='\''.(function_exists('\''run_cf_queue_once'\'')?'\''yes'\'':'\''no'\'').PHP_EOL;
+'
+init_ok
+worker_loaded
+run_fn=yes
++ /www/server/php/74/bin/php -d display_errors=1 -d error_reporting=32767 /www/wwwroot/my.dnshe.com/modules/addons/domain_hub/worker.php 5
++ echo exit_code=0
+exit_code=0
++ ls -l /tmp/domain_hub_worker.lock
+-rw-r--r-- 1 root root 0 Apr 28 15:42 /tmp/domain_hub_worker.lock
++ lsof /tmp/domain_hub_worker.lock
++ true
+++ date '+%F %T'
++ echo '==== 2026-04-29 11:30:02 END ===='
+==== 2026-04-29 11:30:02 END ====
+++ date '+%F %T'
++ echo '==== 2026-04-29 11:35:01 START ===='
+==== 2026-04-29 11:35:01 START ====
++ whoami
+root
++ id
+uid=0(root) gid=0(root) groups=0(root)
++ pwd
+/root
+++ /www/server/php/74/bin/php -v
+++ head -n 1
++ echo 'PHP: PHP 7.4.33 (cli) (built: Sep  8 2025 10:32:59) ( NTS )'
+PHP: PHP 7.4.33 (cli) (built: Sep  8 2025 10:32:59) ( NTS )
++ echo MODULES:
+MODULES:
++ /www/server/php/74/bin/php -m
++ egrep -i 'pdo|mysql|ioncube'
+ionCube Loader
+mysqli
+mysqlnd
+PDO
+pdo_mysql
+pdo_sqlite
+the ionCube PHP Loader + ionCube24
++ cd /www/wwwroot/my.dnshe.com
++ /www/server/php/74/bin/php -d display_errors=1 -d error_reporting=32767 -r '
+chdir('\''/www/wwwroot/my.dnshe.com'\'');
+require '\''init.php'\'';
+echo '\''init_ok'\''.PHP_EOL;
+require '\''modules/addons/domain_hub/worker.php'\'';
+echo '\''worker_loaded'\''.PHP_EOL;
+echo '\''run_fn='\''.(function_exists('\''run_cf_queue_once'\'')?'\''yes'\'':'\''no'\'').PHP_EOL;
+'
+init_ok
+worker_loaded
+run_fn=yes
++ /www/server/php/74/bin/php -d display_errors=1 -d error_reporting=32767 /www/wwwroot/my.dnshe.com/modules/addons/domain_hub/worker.php 5
++ echo exit_code=0
+exit_code=0
++ ls -l /tmp/domain_hub_worker.lock
+-rw-r--r-- 1 root root 0 Apr 28 15:42 /tmp/domain_hub_worker.lock
++ lsof /tmp/domain_hub_worker.lock
++ true
+++ date '+%F %T'
++ echo '==== 2026-04-29 11:35:01 END ===='
+==== 2026-04-29 11:35:01 END ====
