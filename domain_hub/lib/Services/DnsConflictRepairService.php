@@ -65,8 +65,21 @@ class CfDnsConflictRepairService
             }
             if ($target) return self::successFromTarget($target, $typeU, $content, $ttl, $priority, $line, true, count($candidates));
             if (!$allowReplace) return ['success'=>false,'error'=>'replace_not_allowed','remote_candidates_count'=>count($candidates)];
-            if (count($candidates) !== 1) return ['success'=>false,'error'=>count($candidates)===0?'no unique conflict target':'multiple conflict targets','remote_candidates_count'=>count($candidates)];
-            $target = $candidates[0]; $targetId = trim((string)($target['id'] ?? ''));
+            $replaceCandidates = [];
+            foreach ($candidates as $cand) {
+                if (self::normalizeLineValue($cand['line'] ?? '') === $line) {
+                    $replaceCandidates[] = $cand;
+                }
+            }
+            if (count($replaceCandidates) !== 1) {
+                return [
+                    'success'=>false,
+                    'error'=>count($replaceCandidates)===0?'no unique line-matched conflict target':'multiple line-matched conflict targets',
+                    'remote_candidates_count'=>count($candidates),
+                    'line_matched_candidates_count'=>count($replaceCandidates),
+                ];
+            }
+            $target = $replaceCandidates[0]; $targetId = trim((string)($target['id'] ?? ''));
             $payload = ['type'=>$typeU,'name'=>$targetName,'content'=>$content,'ttl'=>$ttl];
             if (self::comparePriorityApplies($typeU)) $payload['priority'] = $priority;
             if ($line !== '') $payload['line'] = $line;

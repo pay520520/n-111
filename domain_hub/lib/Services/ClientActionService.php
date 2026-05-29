@@ -3131,7 +3131,8 @@ if($_POST['action'] == "create_dns" && isset($_POST['subdomain_id'])) {
                                         $contentMatchedCandidate = null;
                                         foreach ($candidates as $cand) {
                                             if (CfDnsConflictRepairService::normalizeDnsContent((string)($cand['content'] ?? ''), $record_type_upper) === CfDnsConflictRepairService::normalizeDnsContent((string)$record_content, $record_type_upper)) {
-                                                if ($contentMatchedCandidate === null) {
+                                                $candidateLineMatches = CfDnsConflictRepairService::normalizeLineValue($cand['line'] ?? '') === CfDnsConflictRepairService::normalizeLineValue((string) $line);
+                                                if ($contentMatchedCandidate === null && $candidateLineMatches) {
                                                     $contentMatchedCandidate = $cand;
                                                 }
                                                 if (CfDnsConflictRepairService::verifyRemoteRecord($cand, $record_type_upper, $final_name, $record_content, intval($record_ttl), intval($record_priority), (string)$line)) {
@@ -3225,15 +3226,29 @@ if ($target) {
                                                 })
                                                 ->orderBy('id', 'desc')
                                                 ->first();
-                                            if ($existing) {
+                                            if ($rid !== '' && self::remoteRecordIdLineConflictExists((int) $record->id, $rid, (string) $line, $existing ? intval($existing->id ?? 0) : null)) {
+                                                $proactiveRepairFailed = true;
+                                                $proactiveRepairFailedMessage = self::remoteRecordIdLineConflictMessage();
+                                                if (function_exists('cloudflare_subdomain_log')) {
+                                                    cloudflare_subdomain_log('client_create_dns_repair_failed', [
+                                                        'reason' => 'record_id_line_conflict',
+                                                        'record_id' => $rid,
+                                                        'line' => $line,
+                                                    ], $userid, $record->id);
+                                                }
+                                            } elseif ($existing) {
                                                 Capsule::table('mod_cloudflare_dns_records')->where('id', $existing->id)->update($payload);
                                             } else {
                                                 $payload['created_at'] = $now;
                                                 Capsule::table('mod_cloudflare_dns_records')->insert($payload);
                                             }
-                                            CfSubdomainService::markHasDnsHistory($record->id);
-                                            CfSubdomainService::syncDnsHistoryFlag($record->id);
-                                            $creation = ['record_id' => $rid !== '' ? $rid : null, 'result' => ['success'=>true], 'final_name' => $final_name];
+                                            if ($proactiveRepairFailed) {
+                                                $target = null;
+                                            } else {
+                                                CfSubdomainService::markHasDnsHistory($record->id);
+                                                CfSubdomainService::syncDnsHistoryFlag($record->id);
+                                                $creation = ['record_id' => $rid !== '' ? $rid : null, 'result' => ['success'=>true], 'final_name' => $final_name];
+                                            }
                                         }
                                     }
                                 } catch (\Throwable $ignoreProactive) {
@@ -3326,6 +3341,10 @@ if ($target) {
 
                                             $cfRecordId = $res['result']['id'] ?? ($res['RecordId'] ?? null);
                                             $now = date('Y-m-d H:i:s');
+
+                                            if ($cfRecordId !== null && self::remoteRecordIdLineConflictExists((int) $record->id, (string) $cfRecordId, (string) $line)) {
+                                                throw new \RuntimeException(self::remoteRecordIdLineConflictMessage());
+                                            }
 
                                             $existsSame = Capsule::table('mod_cloudflare_dns_records')
                                                 ->where('subdomain_id', $record->id)
@@ -3468,6 +3487,9 @@ if ($target) {
                                                     })
                                                     ->orderBy('id', 'desc')
                                                     ->first();
+                                                if ($rid !== '' && self::remoteRecordIdLineConflictExists((int) $record->id, $rid, (string) $line, $existing ? intval($existing->id ?? 0) : null)) {
+                                                    throw new \RuntimeException(self::remoteRecordIdLineConflictMessage());
+                                                }
                                                 if ($existing) {
                                                     Capsule::table('mod_cloudflare_dns_records')->where('id', $existing->id)->update($payload);
                                                 } else {
@@ -5753,6 +5775,35 @@ if($_POST['action'] == 'replace_ns_group' && isset($_POST['subdomain_id'])) {
     private static function normalizeLineValue($line): string
     {
         return CfDnsConflictRepairService::normalizeLineValue($line);
+    }
+
+    private static function remoteRecordIdLineConflictExists(int $subdomainId, string $recordId, string $line, ?int $excludeLocalRecordId = null): bool
+    {
+        $recordId = trim($recordId);
+        if ($subdomainId <= 0 || $recordId === '') {
+            return false;
+        }
+        try {
+            $query = Capsule::table('mod_cloudflare_dns_records')
+                ->where('subdomain_id', $subdomainId)
+                ->where('record_id', $recordId)
+                ->whereRaw('COALESCE(`line`, "") <> ?', [self::normalizeLineValue($line)]);
+            if (($excludeLocalRecordId ?? 0) > 0) {
+                $query->where('id', '<>', intval($excludeLocalRecordId));
+            }
+            return $query->exists();
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    private static function remoteRecordIdLineConflictMessage(): string
+    {
+        return self::actionTextByLanguage(
+            'dns.repair.record_id_line_conflict',
+            '云端返回的记录ID已被其他线路占用，已拒绝写入本地记录以避免覆盖分线路解析。请刷新后重试或联系管理员校准。',
+            'The provider returned a record ID already used by another line. The local write was rejected to avoid overwriting line-based DNS records. Please refresh and retry or contact support.'
+        );
     }
 
     private static function resolveSubmittedDnsTtl($rawTtl, string $recordTypeUpper): int

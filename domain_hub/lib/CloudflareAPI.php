@@ -182,7 +182,8 @@ class CloudflareAPI {
             'name' => $name,
             'content' => $rec['Value'] ?? '',
             'ttl' => intval($rec['TTL'] ?? 600),
-            'proxied' => false
+            'proxied' => false,
+            'line' => trim((string)($rec['Line'] ?? ($rec['RecordLine'] ?? '')))
         ];
     }
 
@@ -470,7 +471,8 @@ class CloudflareAPI {
             'RR' => $res['RR'] ?? '',
             'Type' => $res['Type'] ?? '',
             'Value' => $res['Value'] ?? '',
-            'TTL' => $res['TTL'] ?? 600
+            'TTL' => $res['TTL'] ?? 600,
+            'Line' => $res['Line'] ?? ($res['RecordLine'] ?? '')
         ], $res['DomainName'] ?? $zone_id);
         return ['success' => true, 'result' => $mapped];
     }
