@@ -720,34 +720,84 @@ function cfmod_worker_rate_limit_backoff_seconds(int $attempt): int {
     return max(1, min(16, $seconds));
 }
 
-function cfmod_worker_consume_remote_match(array &$remoteIndex, string $name, string $type, string $content): ?array {
+function cfmod_worker_consume_remote_match(array &$remoteIndex, string $name, string $type, string $content, $line = ''): ?array {
     $n = strtolower($name);
     $t = strtoupper($type);
     $target = cfmod_worker_normalize_record_content($content, $t);
+    $lineKey = cfmod_worker_normalize_line_value($line);
 
-    if (empty($remoteIndex[$n][$t]) || !is_array($remoteIndex[$n][$t])) {
+    if (empty($remoteIndex[$n][$t][$lineKey]) || !is_array($remoteIndex[$n][$t][$lineKey])) {
         return null;
     }
 
-    foreach ($remoteIndex[$n][$t] as $idx => $record) {
+    foreach ($remoteIndex[$n][$t][$lineKey] as $idx => $record) {
         $recordContent = cfmod_worker_normalize_record_content($record['content'] ?? '', $t);
-        if ($recordContent !== $target) {
+        $recordLine = cfmod_worker_record_line_value($record);
+        if ($recordContent !== $target || $recordLine !== $lineKey) {
             continue;
         }
         $matched = $record;
-        unset($remoteIndex[$n][$t][$idx]);
-        if (empty($remoteIndex[$n][$t])) {
-            unset($remoteIndex[$n][$t]);
-            if (empty($remoteIndex[$n])) {
-                unset($remoteIndex[$n]);
+        unset($remoteIndex[$n][$t][$lineKey][$idx]);
+        if (empty($remoteIndex[$n][$t][$lineKey])) {
+            unset($remoteIndex[$n][$t][$lineKey]);
+            if (empty($remoteIndex[$n][$t])) {
+                unset($remoteIndex[$n][$t]);
+                if (empty($remoteIndex[$n])) {
+                    unset($remoteIndex[$n]);
+                }
             }
         } else {
-            $remoteIndex[$n][$t] = array_values($remoteIndex[$n][$t]);
+            $remoteIndex[$n][$t][$lineKey] = array_values($remoteIndex[$n][$t][$lineKey]);
         }
         return $matched;
     }
 
     return null;
+}
+
+function cfmod_worker_flatten_remote_line_buckets($lineBuckets): array {
+    if (!is_array($lineBuckets)) {
+        return [];
+    }
+    $flattened = [];
+    foreach ($lineBuckets as $records) {
+        if (!is_array($records)) {
+            continue;
+        }
+        foreach ($records as $record) {
+            $flattened[] = $record;
+        }
+    }
+    return $flattened;
+}
+
+function cfmod_worker_create_dns_record_for_local($providerClient, string $zoneId, $localRecord, string $type): array {
+    $type = strtoupper(trim($type));
+    $line = cfmod_worker_record_line_value($localRecord);
+    $ttl = cfmod_normalize_ttl($localRecord->ttl ?? 600);
+
+    if ($line !== '' && method_exists($providerClient, 'createDnsRecordRaw')) {
+        $payload = [
+            'type' => $type,
+            'name' => (string) ($localRecord->name ?? ''),
+            'content' => (string) ($localRecord->content ?? ''),
+            'ttl' => $ttl,
+            'line' => $line,
+        ];
+        if (in_array($type, ['MX', 'SRV'], true) && isset($localRecord->priority) && $localRecord->priority !== null) {
+            $payload['priority'] = intval($localRecord->priority);
+        }
+        return $providerClient->createDnsRecordRaw($zoneId, $payload);
+    }
+
+    return $providerClient->createDnsRecord(
+        $zoneId,
+        (string) ($localRecord->name ?? ''),
+        $type,
+        (string) ($localRecord->content ?? ''),
+        $ttl,
+        boolval($localRecord->proxied ?? false)
+    );
 }
 
 function cfmod_worker_payload_bool(array $payload, string $key, bool $default = false): bool {
@@ -2059,12 +2109,13 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array $l
 
         $n = strtolower($lr->name);
         $t = strtoupper($lr->type);
-        $matched = cfmod_worker_consume_remote_match($remoteIndex, $n, $t, (string) $lr->content);
+        $localLine = cfmod_worker_record_line_value($lr);
+        $matched = cfmod_worker_consume_remote_match($remoteIndex, $n, $t, (string) $lr->content, $localLine);
         if (!$matched) {
             $action = 'noop';
             if ($mode === 'fix') {
                 if ($allowFixMissing) {
-                    $res = $cf->createDnsRecord($zoneId, $lr->name, $t, $lr->content, $lr->ttl, boolval($lr->proxied));
+                    $res = cfmod_worker_create_dns_record_for_local($cf, $zoneId, $lr, $t);
                     if ($res['success'] ?? false) {
                         $action = 'created_on_cf';
                         $newId = $res['result']['id'] ?? null;
@@ -2094,6 +2145,9 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array $l
         if (intval($matched['ttl'] ?? 0) !== $lr->ttl) {
             $needUpdate = true;
             $update['ttl'] = $lr->ttl;
+            if ($localLine !== '') {
+                $update['line'] = $localLine;
+            }
         }
         if ($needUpdate) {
             $action = 'noop';
@@ -2129,98 +2183,117 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array $l
         if (!($n === $nameSub || cf_str_ends_with($n, '.' . $nameSub))) {
             continue;
         }
-        foreach ($typeToList as $t => $list) {
-            foreach ($list as $idx => $cr) {
-                $action = 'noop';
-                if ($priority === 'local') {
-                    if ($mode === 'fix') {
-                        if (!$allowFixExtra) {
-                            $action = 'scope_skip_extra';
-                        } elseif (cfmod_worker_is_sensitive_dns_type((string) $t) && !$allowSensitiveDelete) {
-                            if ($allowFixMissing) {
-                                $imported = cfmod_worker_import_remote_record_to_local(
-                                    intval($sub->id),
-                                    $zoneId,
-                                    $n,
-                                    $t,
-                                    $cr
-                                );
-                                if ($imported) {
-                                    $action = 'imported_local_sensitive';
-                                    $stats['records_imported_local'] = ($stats['records_imported_local'] ?? 0) + 1;
+        foreach ($typeToList as $t => $lineBuckets) {
+            foreach ($lineBuckets as $lineKey => $list) {
+                if (!is_array($list)) {
+                    continue;
+                }
+                foreach ($list as $idx => $cr) {
+                    $remoteLine = cfmod_worker_record_line_value($cr);
+                    $action = 'noop';
+                    if ($priority === 'local') {
+                        if ($mode === 'fix') {
+                            if (!$allowFixExtra) {
+                                $action = 'scope_skip_extra';
+                            } elseif (cfmod_worker_is_sensitive_dns_type((string) $t) && !$allowSensitiveDelete) {
+                                if ($allowFixMissing) {
+                                    $imported = cfmod_worker_import_remote_record_to_local(
+                                        intval($sub->id),
+                                        $zoneId,
+                                        $n,
+                                        $t,
+                                        $cr
+                                    );
+                                    if ($imported) {
+                                        $action = 'imported_local_sensitive';
+                                        $stats['records_imported_local'] = ($stats['records_imported_local'] ?? 0) + 1;
+                                    } else {
+                                        $action = 'import_failed_sensitive';
+                                        $stats['warnings'][] = 'import_failed_sensitive:' . $sub->id . ':' . $n . ':' . $t;
+                                    }
                                 } else {
-                                    $action = 'import_failed_sensitive';
-                                    $stats['warnings'][] = 'import_failed_sensitive:' . $sub->id . ':' . $n . ':' . $t;
+                                    $action = 'scope_skip_sensitive';
+                                }
+                            } elseif (!empty($cr['id'])) {
+                                $res = $cf->deleteSubdomain($zoneId, $cr['id'], [
+                                    'name' => $n,
+                                    'type' => $t,
+                                    'content' => $cr['content'] ?? null,
+                                    'line' => $remoteLine,
+                                ]);
+                                if (($res['success'] ?? false) || cfmod_worker_provider_not_found($res)) {
+                                    $action = 'deleted_on_cf';
+                                    unset($remoteIndex[$n][$t][$lineKey][$idx]);
+                                    $remoteIndex[$n][$t][$lineKey] = array_values($remoteIndex[$n][$t][$lineKey]);
+                                    if (empty($remoteIndex[$n][$t][$lineKey])) {
+                                        unset($remoteIndex[$n][$t][$lineKey]);
+                                    }
+                                    if (empty($remoteIndex[$n][$t])) {
+                                        unset($remoteIndex[$n][$t]);
+                                    }
+                                    if (empty($remoteIndex[$n])) {
+                                        unset($remoteIndex[$n]);
+                                    }
+                                } else {
+                                    $action = 'delete_failed';
+                                    $stats['warnings'][] = 'delete_failed:' . ($cr['id'] ?? '');
                                 }
                             } else {
-                                $action = 'scope_skip_sensitive';
+                                $action = 'delete_skipped_no_id';
+                                $stats['warnings'][] = 'delete_skipped_no_id:' . $sub->id . ':' . $n . ':' . $t;
                             }
-                        } elseif (!empty($cr['id'])) {
-                            $res = $cf->deleteSubdomain($zoneId, $cr['id'], [
-                                'name' => $n,
-                                'type' => $t,
-                                'content' => $cr['content'] ?? null,
-                            ]);
-                            if (($res['success'] ?? false) || cfmod_worker_provider_not_found($res)) {
-                                $action = 'deleted_on_cf';
-                                unset($remoteIndex[$n][$t][$idx]);
-                                $remoteIndex[$n][$t] = array_values($remoteIndex[$n][$t]);
-                            } else {
-                                $action = 'delete_failed';
-                                $stats['warnings'][] = 'delete_failed:' . ($cr['id'] ?? '');
-                            }
+                        }
+                        cfmod_sync_result($jobId, $sub->id, 'extra_on_cf', $action, [
+                            'name' => $n,
+                            'type' => $t,
+                            'content' => ($cr['content'] ?? ''),
+                            'record_id' => ($cr['id'] ?? null),
+                            'line' => $remoteLine,
+                        ]);
+                        cfmod_track_sync_stat($stats, 'extra_on_cf', $action);
+                        continue;
+                    }
+
+                    if ($mode === 'fix') {
+                        if (!$allowFixMissing) {
+                            $action = 'scope_skip_missing';
                         } else {
-                            $action = 'delete_skipped_no_id';
-                            $stats['warnings'][] = 'delete_skipped_no_id:' . $sub->id . ':' . $n . ':' . $t;
+                            try {
+                                Capsule::table('mod_cloudflare_dns_records')->insert([
+                                    'subdomain_id' => $sub->id,
+                                    'zone_id' => $zoneId,
+                                    'record_id' => ($cr['id'] ?? null),
+                                    'name' => $n,
+                                    'type' => $t,
+                                    'content' => ($cr['content'] ?? ''),
+                                    'ttl' => intval($cr['ttl'] ?? 600),
+                                    'proxied' => 0,
+                                    'status' => 'active',
+                                    'priority' => null,
+                                    'line' => $remoteLine,
+                                    'created_at' => date('Y-m-d H:i:s'),
+                                    'updated_at' => date('Y-m-d H:i:s')
+                                ]);
+                                CfSubdomainService::markHasDnsHistory($sub->id);
+                                $action = 'imported_local';
+                                $stats['records_imported_local'] = ($stats['records_imported_local'] ?? 0) + 1;
+                            } catch (\Throwable $e) {
+                                $action = 'import_failed';
+                                $stats['warnings'][] = 'import_failed:' . $sub->id . ':' . $n . ':' . $t;
+                                cfmod_report_exception('calibrate_import', $e);
+                            }
                         }
                     }
+
                     cfmod_sync_result($jobId, $sub->id, 'extra_on_cf', $action, [
                         'name' => $n,
                         'type' => $t,
                         'content' => ($cr['content'] ?? ''),
-                        'record_id' => ($cr['id'] ?? null)
+                        'record_id' => ($cr['id'] ?? null),
+                        'line' => $remoteLine,
                     ]);
                     cfmod_track_sync_stat($stats, 'extra_on_cf', $action);
-                    continue;
                 }
-
-                if ($mode === 'fix') {
-                    if (!$allowFixMissing) {
-                        $action = 'scope_skip_missing';
-                    } else {
-                        try {
-                            $remoteLine = cfmod_worker_record_line_value($cr);
-                            Capsule::table('mod_cloudflare_dns_records')->insert([
-                                'subdomain_id' => $sub->id,
-                                'zone_id' => $zoneId,
-                                'record_id' => ($cr['id'] ?? null),
-                                'name' => $n,
-                                'type' => $t,
-                                'content' => ($cr['content'] ?? ''),
-                                'ttl' => intval($cr['ttl'] ?? 600),
-                                'proxied' => 0,
-                                'status' => 'active',
-                                'priority' => null,
-                                'line' => $remoteLine,
-                                'created_at' => date('Y-m-d H:i:s'),
-                                'updated_at' => date('Y-m-d H:i:s')
-                            ]);
-                            CfSubdomainService::markHasDnsHistory($sub->id);
-                            $action = 'imported_local';
-                        } catch (\Throwable $e) {
-                            $action = 'import_failed';
-                            $stats['warnings'][] = 'import_failed:' . $sub->id . ':' . $n . ':' . $t;
-                            cfmod_report_exception('calibrate_import', $e);
-                        }
-                    }
-                }
-
-                cfmod_sync_result($jobId, $sub->id, 'extra_on_cf', $action, [
-                    'name' => $n,
-                    'type' => $t,
-                    'content' => ($cr['content'] ?? '')
-                ]);
-                cfmod_track_sync_stat($stats, 'extra_on_cf', $action);
             }
         }
     }
@@ -2251,7 +2324,8 @@ function cfmod_worker_build_remote_index_for_subdomain($cf, string $zoneId, $sub
             if ($recordName === '' || $recordType === '') {
                 continue;
             }
-            $index[$recordName][$recordType][] = $rec;
+            $recordLine = cfmod_worker_record_line_value($rec);
+            $index[$recordName][$recordType][$recordLine][] = $rec;
         }
     }
     return $index;
@@ -4319,7 +4393,7 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
 
                     foreach ($allTypes as $recordType) {
                         $localList = $localBuckets[$recordName][$recordType] ?? [];
-                        $remoteList = $remoteIndex[$recordName][$recordType] ?? [];
+                        $remoteList = cfmod_worker_flatten_remote_line_buckets($remoteIndex[$recordName][$recordType] ?? []);
 
                         $localByContent = cfmod_worker_group_records_by_content($localList);
                         $remoteByContent = cfmod_worker_group_records_by_content($remoteList);

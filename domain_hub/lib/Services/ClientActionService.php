@@ -3074,6 +3074,15 @@ if($_POST['action'] == "create_dns" && isset($_POST['subdomain_id'])) {
                             } else {
                                 $limitPerSub = intval($module_settings['max_dns_records_per_subdomain'] ?? 0);
                                 $final_name = $record_name === '@' ? $record->subdomain : ($record_name . '.' . $record->subdomain);
+                                if ($line !== '' && !self::providerSupportsDnsLine($providerContext)) {
+                                    $msg = self::unsupportedDnsLineMessage();
+                                    $msg_type = 'warning';
+                                    return [
+                                        'msg' => $msg,
+                                        'msg_type' => $msg_type,
+                                        'registerError' => $registerError,
+                                    ];
+                                }
                                 if (!self::passesCnameMutexRule((int) $record->id, (string) $final_name, (string) $record_type_upper, null)) {
                                     $msg = self::actionTextByLanguage(
                                         'dns.cname_mutex_conflict',
@@ -3306,10 +3315,14 @@ if ($target) {
 
                                             switch ($record_type_upper) {
                                                 case 'MX':
-                                                    $res = $cf->createMXRecord($record->cloudflare_zone_id, $final_name, $record_content, $record_priority, $record_ttl);
+                                                    $res = self::createDnsRecordWithLineAwarePayload($cf, $record->cloudflare_zone_id, $record_type_upper, $final_name, $record_content, $record_ttl, $record_priority, (string) $line);
                                                     break;
                                                 case 'SRV':
-                                                    $res = $cf->createSRVRecord($record->cloudflare_zone_id, $final_name, $record_target, $record_port, $record_priority, $record_weight, $record_ttl);
+                                                    $res = self::createDnsRecordWithLineAwarePayload($cf, $record->cloudflare_zone_id, $record_type_upper, $final_name, $record_content, $record_ttl, $record_priority, (string) $line, [
+                                                        'target' => $record_target,
+                                                        'port' => $record_port,
+                                                        'weight' => $record_weight,
+                                                    ]);
                                                     break;
                                                 case 'CAA':
                                                     $caa_flag = intval($_POST['caa_flag'] ?? 0);
@@ -3318,16 +3331,15 @@ if ($target) {
                                                     if ($caa_value === '') {
                                                         throw new \RuntimeException(self::actionText('dns.validation.caa_value_required', 'CAA记录的Value不能为空'));
                                                     }
-                                                    $res = $cf->createCAARecord($record->cloudflare_zone_id, $final_name, $caa_flag, $caa_tag, $caa_value, $record_ttl);
+                                                    $caa_content = $caa_flag . ' ' . $caa_tag . ' "' . str_replace('"', '\"', $caa_value) . '"';
+                                                    $res = self::createDnsRecordWithLineAwarePayload($cf, $record->cloudflare_zone_id, $record_type_upper, $final_name, $caa_content, $record_ttl, $record_priority, (string) $line, [
+                                                        'caa_flag' => $caa_flag,
+                                                        'caa_tag' => $caa_tag,
+                                                        'caa_value' => $caa_value,
+                                                    ]);
                                                     break;
                                                 default:
-                                                    $res = $cf->createDnsRecordRaw($record->cloudflare_zone_id, [
-                                                        'type' => $record_type_upper,
-                                                        'name' => $final_name,
-                                                        'content' => $record_content,
-                                                        'ttl' => $record_ttl,
-                                                        'line' => $line
-                                                    ]);
+                                                    $res = self::createDnsRecordWithLineAwarePayload($cf, $record->cloudflare_zone_id, $record_type_upper, $final_name, $record_content, $record_ttl, $record_priority, (string) $line);
                                                     break;
                                             }
 
@@ -4023,6 +4035,15 @@ if($_POST['action'] == "update_dns" && isset($_POST['subdomain_id'])) {
                                 $msg = $providerError;
                                 $msg_type = 'danger';
                             } else {
+                                if ($line !== '' && !self::providerSupportsDnsLine($providerContext)) {
+                                    $msg = self::unsupportedDnsLineMessage();
+                                    $msg_type = 'warning';
+                                    return [
+                                        'msg' => $msg,
+                                        'msg_type' => $msg_type,
+                                        'registerError' => $registerError,
+                                    ];
+                                }
                                 $normalizedRecordName = strtolower(trim((string) $record_name));
                                 $normalizedSubdomain = strtolower(trim((string) $record->subdomain));
                                 if ($normalizedRecordName === '' || $normalizedRecordName === '@') {
@@ -5289,6 +5310,72 @@ if($_POST['action'] == 'replace_ns_group' && isset($_POST['subdomain_id'])) {
         }
         static $supported = ['create_dns', 'update_dns', 'delete_dns_record', 'replace_ns_group', 'toggle_cdn', 'toggle_record_cdn'];
         return in_array($action, $supported, true);
+    }
+
+    private static function providerSupportsDnsLine(array $providerContext): bool
+    {
+        $providerType = strtolower(trim((string) ($providerContext['account']['provider_type'] ?? ($providerContext['provider_type'] ?? ''))));
+        if ($providerType !== '') {
+            return $providerType === 'alidns';
+        }
+
+        $client = $providerContext['client'] ?? null;
+        return is_object($client) && get_class($client) === 'CloudflareAPI';
+    }
+
+    private static function unsupportedDnsLineMessage(): string
+    {
+        return self::actionTextByLanguage(
+            'dns.line.unsupported_provider',
+            '当前 DNS 服务商不支持线路解析参数，请保持默认线路后重试。',
+            'The current DNS provider does not support line routing. Keep the default line and try again.'
+        );
+    }
+
+    private static function createDnsRecordWithLineAwarePayload($providerClient, string $zoneId, string $type, string $name, string $content, int $ttl, int $priority, string $line, array $extra = []): array
+    {
+        $type = strtoupper(trim($type));
+        $line = self::normalizeLineValue($line);
+        $payload = array_merge([
+            'type' => $type,
+            'name' => $name,
+            'content' => $content,
+            'ttl' => $ttl,
+            'line' => $line,
+        ], $extra);
+        if (in_array($type, ['MX', 'SRV'], true)) {
+            $payload['priority'] = $priority;
+        }
+
+        if ($line !== '' && method_exists($providerClient, 'createDnsRecordRaw')) {
+            return $providerClient->createDnsRecordRaw($zoneId, $payload);
+        }
+
+        switch ($type) {
+            case 'MX':
+                return $providerClient->createMXRecord($zoneId, $name, $content, $priority, $ttl);
+            case 'SRV':
+                return $providerClient->createSRVRecord(
+                    $zoneId,
+                    $name,
+                    (string) ($extra['target'] ?? ''),
+                    intval($extra['port'] ?? 0),
+                    $priority,
+                    intval($extra['weight'] ?? 0),
+                    $ttl
+                );
+            case 'CAA':
+                return $providerClient->createCAARecord(
+                    $zoneId,
+                    $name,
+                    intval($extra['caa_flag'] ?? 0),
+                    (string) ($extra['caa_tag'] ?? 'issue'),
+                    (string) ($extra['caa_value'] ?? ''),
+                    $ttl
+                );
+            default:
+                return $providerClient->createDnsRecordRaw($zoneId, $payload);
+        }
     }
 
     private static function shouldSkipProviderExistsCheck(array $providerContext, array $settings, string $rootdomain = ''): bool
