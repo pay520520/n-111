@@ -71,12 +71,12 @@ class CfDnsConflictRepairService
                     $replaceCandidates[] = $cand;
                 }
             }
-            if (count($replaceCandidates) !== 1) {
+            if (count($replaceCandidates) < 1) {
                 return [
                     'success'=>false,
-                    'error'=>count($replaceCandidates)===0?'no unique line-matched conflict target':'multiple line-matched conflict targets',
+                    'error'=>'no unique line-matched conflict target',
                     'remote_candidates_count'=>count($candidates),
-                    'line_matched_candidates_count'=>count($replaceCandidates),
+                    'line_matched_candidates_count'=>0,
                 ];
             }
             $target = $replaceCandidates[0]; $targetId = trim((string)($target['id'] ?? ''));
@@ -85,12 +85,22 @@ class CfDnsConflictRepairService
             if ($line !== '') $payload['line'] = $line;
             $updateRes = method_exists($providerClient, 'updateDnsRecordRaw') ? $providerClient->updateDnsRecordRaw($zoneId, $targetId, $payload) : $providerClient->updateDnsRecord($zoneId, $targetId, $payload);
             if (!($updateRes['success'] ?? false)) return ['success' => false, 'error' => self::providerErrorText($updateRes)];
+            $effectiveRecordId = $targetId;
+            if (isset($updateRes['result']) && is_array($updateRes['result']) && isset($updateRes['result']['id'])) {
+                $effectiveRecordId = trim((string)$updateRes['result']['id']);
+            } elseif (isset($updateRes['RecordId'])) {
+                $effectiveRecordId = trim((string)$updateRes['RecordId']);
+            }
+            if ($effectiveRecordId === '') { $effectiveRecordId = $targetId; }
             if ($verifyAfterUpdate) {
                 $verifiedRecord = null;
                 if (method_exists($providerClient, 'getDnsRecord')) {
-                    $verifyRes = $providerClient->getDnsRecord($zoneId, $targetId);
-                    if (($verifyRes['success'] ?? false) && is_array($verifyRes['result'] ?? null)) {
-                        $verifiedRecord = (array) $verifyRes['result'];
+                    foreach (array_values(array_unique(array_filter([$effectiveRecordId, $targetId], static function ($id) { return trim((string)$id) !== ''; }))) as $verifyId) {
+                        $verifyRes = $providerClient->getDnsRecord($zoneId, (string)$verifyId);
+                        if (($verifyRes['success'] ?? false) && is_array($verifyRes['result'] ?? null)) {
+                            $verifiedRecord = (array) $verifyRes['result'];
+                            break;
+                        }
                     }
                 }
                 if ($verifiedRecord === null && method_exists($providerClient, 'getDnsRecords')) {
@@ -98,20 +108,44 @@ class CfDnsConflictRepairService
                     if (($listRes['success'] ?? false) && is_array($listRes['result'] ?? null)) {
                         foreach ((array) ($listRes['result'] ?? []) as $record) {
                             if (!is_array($record)) { continue; }
-                            if (trim((string) ($record['id'] ?? '')) !== $targetId) { continue; }
+                            $rid = trim((string) ($record['id'] ?? ''));
+                            if ($rid !== $effectiveRecordId && $rid !== $targetId) { continue; }
                             $verifiedRecord = $record;
                             break;
                         }
                     }
                 }
                 if ($verifiedRecord === null) {
-                    return ['success' => false, 'error' => 'post_update_verify_unavailable', 'record_id' => $targetId];
+                    return ['success' => false, 'error' => 'post_update_verify_unavailable', 'record_id' => $effectiveRecordId];
                 }
                 if (!self::verifyRemoteRecord($verifiedRecord, $typeU, $name, $content, $ttl, $priority, $line)) {
-                    return ['success' => false, 'error' => 'post_update_verify_failed', 'record_id' => $targetId];
+                    return ['success' => false, 'error' => 'post_update_verify_failed', 'record_id' => $effectiveRecordId];
                 }
             }
-            return self::successFromTarget($target, $typeU, $content, $ttl, $priority, $line, false, count($candidates));
+            $deletedExtras = 0;
+            $deleteErrors = [];
+            if (count($replaceCandidates) > 1) {
+                if (!method_exists($providerClient, 'deleteSubdomain')) {
+                    $deleteErrors[] = ['record_id' => '*', 'error' => 'delete_extra_conflict_targets_unavailable'];
+                } else {
+                    foreach (array_slice($replaceCandidates, 1) as $extra) {
+                        $extraId = trim((string)($extra['id'] ?? ''));
+                        if ($extraId === '' || $extraId === $targetId || $extraId === $effectiveRecordId) { continue; }
+                        $deleteRes = $providerClient->deleteSubdomain($zoneId, $extraId, [
+                            'name' => $extra['name'] ?? $targetName,
+                            'type' => $extra['type'] ?? $typeU,
+                            'content' => $extra['content'] ?? null,
+                            'line' => $extra['line'] ?? ($line !== '' ? $line : null),
+                        ]);
+                        if (($deleteRes['success'] ?? false)) {
+                            $deletedExtras++;
+                        } else {
+                            $deleteErrors[] = ['record_id' => $extraId, 'error' => self::providerErrorText($deleteRes)];
+                        }
+                    }
+                }
+            }
+            return self::successFromTarget(array_merge($target, ['id' => $effectiveRecordId]), $typeU, $content, $ttl, $priority, $line, false, count($candidates), $deletedExtras, count($replaceCandidates), $deleteErrors);
         } catch (\Throwable $e) {
             return ['success'=>false,'error'=>$e->getMessage()];
         }
@@ -148,7 +182,9 @@ class CfDnsConflictRepairService
         return empty($types) ? $defaults : array_keys($types);
     }
     private static function providerErrorText(array $res): string { $m = $res['errors'][0] ?? ($res['errors'] ?? 'provider update failed'); return is_array($m) ? json_encode($m, JSON_UNESCAPED_UNICODE) : (string)$m; }
-    private static function successFromTarget(array $target, string $typeU, string $content, int $ttl, int $priority, string $line, bool $noop, int $count): array {
-        return ['success'=>true,'record_id'=>trim((string)($target['id'] ?? '')),'name'=>self::normalizeDnsName((string)($target['name'] ?? '')),'type'=>$typeU,'content'=>$content,'ttl'=>$ttl,'priority'=>self::comparePriorityApplies($typeU)?$priority:null,'line'=>$line!==''?$line:null,'noop'=>$noop,'decision_path'=>$noop?'noop':'update','remote_candidates_count'=>$count];
+    private static function successFromTarget(array $target, string $typeU, string $content, int $ttl, int $priority, string $line, bool $noop, int $count, int $deletedExtras = 0, int $lineMatchedCount = 0, array $deleteErrors = []): array {
+        $result = ['success'=>true,'record_id'=>trim((string)($target['id'] ?? '')),'name'=>self::normalizeDnsName((string)($target['name'] ?? '')),'type'=>$typeU,'content'=>$content,'ttl'=>$ttl,'priority'=>self::comparePriorityApplies($typeU)?$priority:null,'line'=>$line!==''?$line:null,'noop'=>$noop,'decision_path'=>$noop?'noop':'update','remote_candidates_count'=>$count,'line_matched_candidates_count'=>$lineMatchedCount,'extra_conflict_records_deleted'=>$deletedExtras];
+        if (!empty($deleteErrors)) { $result['extra_conflict_delete_errors'] = $deleteErrors; }
+        return $result;
     }
 }
