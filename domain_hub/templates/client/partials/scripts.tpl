@@ -236,6 +236,7 @@
         const ROOT_LIMIT_MAP = <?php echo json_encode($rootLimitMap, CFMOD_SAFE_JSON_FLAGS); ?>;
         const ROOT_INVITE_REQUIRED_MAP = <?php echo json_encode($rootInviteRequiredMap ?? [], CFMOD_SAFE_JSON_FLAGS); ?>;
         const rootLimitHint = document.getElementById('register_limit_hint');
+        const REGISTER_FORBIDDEN_PREFIXES = <?php echo json_encode(array_map('strtolower', (array) $forbidden), CFMOD_SAFE_JSON_FLAGS); ?>;
 const dnsUnlockFeatureEnabled = <?php echo !empty($dnsUnlockFeatureEnabled) ? 'true' : 'false'; ?>;
 const dnsUnlockRequired = dnsUnlockFeatureEnabled && <?php echo !empty($dnsUnlockRequired) ? 'true' : 'false'; ?>;
 
@@ -244,6 +245,112 @@ const dnsUnlockRequired = dnsUnlockFeatureEnabled && <?php echo !empty($dnsUnloc
         const rootSuffix = document.getElementById('register_root_suffix');
         const inviteCodeContainer = document.getElementById('rootdomain_invite_code_container');
         const inviteCodeInput = document.getElementById('rootdomain_invite_code_input');
+        const registerPrefixInput = document.getElementById('register_subdomain_prefix') || document.querySelector('input[name="subdomain"]');
+        const registerAvailabilityHint = document.getElementById('register_availability_hint');
+        let registerAvailabilityTimer = null;
+        let registerAvailabilitySeq = 0;
+        const registerAvailabilityCache = {};
+
+        function setRegisterAvailabilityHint(level, message) {
+            if (!registerAvailabilityHint) { return; }
+            registerAvailabilityHint.className = 'form-text mt-1';
+            ['text-muted','text-success','text-danger','text-warning','text-info'].forEach(function(cls){
+                registerAvailabilityHint.classList.remove(cls);
+            });
+            if (!message) {
+                registerAvailabilityHint.textContent = '';
+                return;
+            }
+            const map = { success: 'text-success', danger: 'text-danger', warning: 'text-warning', info: 'text-info', muted: 'text-muted' };
+            registerAvailabilityHint.classList.add(map[level] || 'text-muted');
+            registerAvailabilityHint.textContent = message;
+        }
+
+        function runLocalRegisterAvailabilityPrecheck(prefix, rootdomain) {
+            const minLen = registerPrefixInput ? parseInt(registerPrefixInput.getAttribute('minlength') || '0', 10) : 0;
+            const maxLen = registerPrefixInput ? parseInt(registerPrefixInput.getAttribute('maxlength') || '255', 10) : 255;
+            if (!rootdomain) {
+                return { stop: true, level: 'muted', message: cfLang('registerAvailabilitySelectRoot', '请先选择根域名') };
+            }
+            if (!prefix) {
+                return { stop: true, level: 'muted', message: cfLang('registerAvailabilityEnterPrefix', '输入域名前缀后自动检测是否可注册') };
+            }
+            if (prefix.length < minLen) {
+                return { stop: true, level: 'muted', message: cfLangFormat('registerAvailabilityMinLength', '至少输入 %s 个字符后检测', minLen) };
+            }
+            if (prefix.length > maxLen) {
+                return { stop: true, level: 'danger', message: cfLangFormat('registerAvailabilityMaxLength', '前缀长度不能超过 %s 个字符', maxLen) };
+            }
+            if (!/^[a-zA-Z0-9-]+$/.test(prefix)) {
+                return { stop: true, level: 'danger', message: cfLang('registerAvailabilityInvalidChars', '只能包含字母、数字和连字符') };
+            }
+            if (prefix.startsWith('.') || prefix.startsWith('-') || prefix.endsWith('.') || prefix.endsWith('-')) {
+                return { stop: true, level: 'danger', message: cfLang('registerEdgeError', '域名前缀不能以 "." 或 "-" 开头或结尾') };
+            }
+            if (REGISTER_FORBIDDEN_PREFIXES.includes(prefix.toLowerCase())) {
+                return { stop: true, level: 'danger', message: cfLang('registerForbiddenPrefix', '该前缀被禁止使用，请选择其他前缀') };
+            }
+            const inviteRequired = ROOT_INVITE_REQUIRED_MAP[String(rootdomain || '').toLowerCase()] || false;
+            const inviteCodeValue = inviteCodeInput ? inviteCodeInput.value.trim() : '';
+            if (inviteRequired && !inviteCodeValue) {
+                return { stop: true, level: 'warning', message: cfLang('registerAvailabilityInviteRequired', '该根域名需要邀请码，输入邀请码后继续检测') };
+            }
+            return { stop: false };
+        }
+
+        function scheduleRegisterAvailabilityCheck() {
+            if (!registerPrefixInput || !rootSelect || !registerAvailabilityHint) { return; }
+            if (registerAvailabilityTimer) { clearTimeout(registerAvailabilityTimer); }
+            const prefix = registerPrefixInput.value.trim();
+            const rootdomain = rootSelect.value.trim();
+            const local = runLocalRegisterAvailabilityPrecheck(prefix, rootdomain);
+            if (local.stop) {
+                setRegisterAvailabilityHint(local.level, local.message);
+                return;
+            }
+            setRegisterAvailabilityHint('muted', cfLang('registerAvailabilityWaiting', '等待输入完成后检测...'));
+            registerAvailabilityTimer = setTimeout(function(){
+                const currentPrefix = registerPrefixInput.value.trim();
+                const currentRoot = rootSelect.value.trim();
+                const currentInvite = inviteCodeInput ? inviteCodeInput.value.trim() : '';
+                const precheck = runLocalRegisterAvailabilityPrecheck(currentPrefix, currentRoot);
+                if (precheck.stop) {
+                    setRegisterAvailabilityHint(precheck.level, precheck.message);
+                    return;
+                }
+                const cacheKey = [currentRoot.toLowerCase(), currentPrefix.toLowerCase(), currentInvite.toUpperCase()].join('|');
+                const cached = registerAvailabilityCache[cacheKey];
+                const now = Date.now();
+                if (cached && cached.expiresAt > now) {
+                    setRegisterAvailabilityHint(cached.level, cached.message);
+                    return;
+                }
+                const seq = ++registerAvailabilitySeq;
+                setRegisterAvailabilityHint('info', cfLang('registerAvailabilityChecking', '正在检测是否可以注册...'));
+                fetch(cfClientBuildModuleUrl('ajax_check_subdomain_availability'), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': window.CF_MOD_CSRF || ''
+                    },
+                    body: JSON.stringify({
+                        subdomain: currentPrefix,
+                        rootdomain: currentRoot,
+                        rootdomain_invite_code: currentInvite
+                    })
+                }).then(function(res){ return res.json(); }).then(function(res){
+                    if (seq !== registerAvailabilitySeq) { return; }
+                    const data = res && res.data ? res.data : res;
+                    const level = data && data.level ? data.level : (res && res.success ? 'muted' : 'warning');
+                    const message = data && data.message ? data.message : (res && res.error ? res.error : cfLang('registerAvailabilityFailed', '检测失败，请稍后重试'));
+                    registerAvailabilityCache[cacheKey] = { level: level, message: message, expiresAt: now + 30000 };
+                    setRegisterAvailabilityHint(level, message);
+                }).catch(function(){
+                    if (seq !== registerAvailabilitySeq) { return; }
+                    setRegisterAvailabilityHint('warning', cfLang('registerAvailabilityFailed', '检测失败，请稍后重试'));
+                });
+            }, 500);
+        }
         
         const updateRootLimitHint = () => {
             if (!rootLimitHint || !rootSelect) {
@@ -281,6 +388,7 @@ const dnsUnlockRequired = dnsUnlockFeatureEnabled && <?php echo !empty($dnsUnloc
                 rootSuffix.textContent = rootSelect.value || cfLang('rootSuffixPlaceholder', '根域名');
                 updateRootLimitHint();
                 updateInviteCodeRequirement();
+                scheduleRegisterAvailabilityCheck();
             };
             rootSelect.addEventListener('change', updateSuffix);
             updateSuffix();
@@ -288,6 +396,15 @@ const dnsUnlockRequired = dnsUnlockFeatureEnabled && <?php echo !empty($dnsUnloc
             updateRootLimitHint();
             updateInviteCodeRequirement();
         }
+
+        if (registerPrefixInput) {
+            registerPrefixInput.addEventListener('input', scheduleRegisterAvailabilityCheck);
+            registerPrefixInput.addEventListener('blur', scheduleRegisterAvailabilityCheck);
+        }
+        if (inviteCodeInput) {
+            inviteCodeInput.addEventListener('input', scheduleRegisterAvailabilityCheck);
+        }
+        scheduleRegisterAvailabilityCheck();
 
         // 表单验证
         const registerForm = document.getElementById('registerForm');
@@ -327,9 +444,8 @@ const dnsUnlockRequired = dnsUnlockFeatureEnabled && <?php echo !empty($dnsUnloc
                     return;
                 }
 
-                const forbidden = <?php echo json_encode($forbidden, CFMOD_SAFE_JSON_FLAGS); ?>;
                 const prefix = rawPrefix.toLowerCase();
-                if (forbidden.includes(prefix)) {
+                if (REGISTER_FORBIDDEN_PREFIXES.includes(prefix)) {
                     e.preventDefault();
                     alert(cfLang('registerForbiddenPrefix', '该前缀被禁止使用，请选择其他前缀'));
                     subdomain.focus();

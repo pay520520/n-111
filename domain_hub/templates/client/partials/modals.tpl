@@ -386,10 +386,11 @@ foreach (preg_split('/[\r\n,]+/', $rootVerifyBlockedRaw) ?: [] as $blockedRoot) 
                         <div class="mb-3">
                             <label class="form-label"><?php echo $modalText('cfclient.modals.register.label.prefix', '域名前缀'); ?></label>
                             <div class="input-group">
-                                <input type="text" name="subdomain" class="form-control" required placeholder="<?php echo $modalText('cfclient.modals.register.placeholder.prefix', '输入前缀，如: myblog'); ?>" pattern="<?php echo $subPrefixPatternHtml; ?>" minlength="<?php echo $subPrefixMinLength; ?>" maxlength="<?php echo $subPrefixMaxLength; ?>">
+                                <input type="text" name="subdomain" id="register_subdomain_prefix" class="form-control" required placeholder="<?php echo $modalText('cfclient.modals.register.placeholder.prefix', '输入前缀，如: myblog'); ?>" pattern="<?php echo $subPrefixPatternHtml; ?>" minlength="<?php echo $subPrefixMinLength; ?>" maxlength="<?php echo $subPrefixMaxLength; ?>" autocomplete="off">
                                 <span class="input-group-text">.<span id="register_root_suffix"><?php echo $modalText('cfclient.modals.register.label.root', '选择根域名', [], true); ?></span></span>
                             </div>
                             <div class="form-text"><?php echo $modalText('cfclient.modals.register.hint.prefix', '只能包含字母、数字和连字符，长度%1$s-%2$s字符', [$subPrefixMinLength, $subPrefixMaxLength]); ?></div>
+                                <div class="form-text mt-1" id="register_availability_hint" aria-live="polite"></div>
                         </div>
                         <div class="mb-3" id="rootdomain_invite_code_container" style="display:none;">
                             <label class="form-label">
