@@ -2685,15 +2685,6 @@ document.querySelector('select[name="record_type"]')?.dispatchEvent(new Event('c
         }
         if(fReset){ fReset.addEventListener('click',()=>{ const url=new URL(location.href); url.searchParams.delete('filter_type'); url.searchParams.delete('filter_name'); url.searchParams.delete('dns_page'); url.searchParams.delete('dns_for'); url.searchParams.delete('page'); location.href=url.toString(); }); }
 
-        // 冲突校验（A/AAAA 与 CNAME 互斥）
-        document.getElementById('dnsForm').addEventListener('submit', function(e) {
-          const type = document.querySelector('select[name="record_type"]').value.toUpperCase();
-          const nameBase = document.getElementById('dns_subdomain_name').value;
-          const recName = (document.getElementById('dns_record_name').value || '@');
-          const fullName = recName==='@' ? nameBase : (recName + '.' + nameBase);
-          // 构建当前名称的已有类型集合
-          const typesHere = [];
-        });
 
         // 解析预览：提交前生成摘要
         function showPreviewAndSubmit(form){
