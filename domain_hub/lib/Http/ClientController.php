@@ -376,6 +376,7 @@ class CfClientController
             $_SESSION['Language'] = $normalized;
             $_SESSION['language'] = $normalized;
             setcookie('WHMCSLanguage', $normalized, time() + 86400 * 365, '/', '', false, true);
+            self::syncWhmcsClientLanguagePreference((int) ($_SESSION['uid'] ?? 0), $normalized);
 
             $params = $returnParams ?? ($_GET ?? []);
             if (($params['action'] ?? '') === 'change_language') {
@@ -387,6 +388,47 @@ class CfClientController
             $redirect = self::resolveRedirectScript($params) . ($query ? ('?' . $query) : '');
             header('Location: ' . $redirect);
             exit;
+    }
+
+    private static function syncWhmcsClientLanguagePreference(int $clientId, string $language): void
+    {
+            if ($clientId <= 0) {
+                return;
+            }
+
+            $whmcsLanguage = self::mapToWhmcsClientLanguage($language);
+            if ($whmcsLanguage === '') {
+                return;
+            }
+
+            try {
+                if (class_exists(Capsule::class)
+                    && Capsule::schema()->hasTable('tblclients')
+                    && Capsule::schema()->hasColumn('tblclients', 'language')) {
+                    Capsule::table('tblclients')
+                        ->where('id', $clientId)
+                        ->update(['language' => $whmcsLanguage]);
+                }
+            } catch (\Throwable $e) {
+                // Language switching must remain non-blocking even if the WHMCS profile
+                // column is unavailable in an older/customized installation.
+            }
+    }
+
+    private static function mapToWhmcsClientLanguage(string $language): string
+    {
+            $normalized = function_exists('cfmod_normalize_language_code')
+                ? cfmod_normalize_language_code($language)
+                : strtolower(trim($language));
+
+            if ($normalized === 'chinese') {
+                return 'chinese';
+            }
+            if ($normalized === 'english') {
+                return 'english';
+            }
+
+            return '';
     }
 
     
