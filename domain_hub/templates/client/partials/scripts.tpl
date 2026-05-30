@@ -270,19 +270,19 @@ const dnsUnlockRequired = dnsUnlockFeatureEnabled && <?php echo !empty($dnsUnloc
             const minLen = registerPrefixInput ? parseInt(registerPrefixInput.getAttribute('minlength') || '0', 10) : 0;
             const maxLen = registerPrefixInput ? parseInt(registerPrefixInput.getAttribute('maxlength') || '255', 10) : 255;
             if (!rootdomain) {
-                return { stop: true, level: 'muted', message: cfLang('registerAvailabilitySelectRoot', '请先选择根域名') };
+                return { stop: true, level: 'muted', message: cfLang('registerAvailabilitySelectRoot', 'Please select a root domain first') };
             }
             if (!prefix) {
-                return { stop: true, level: 'muted', message: cfLang('registerAvailabilityEnterPrefix', '输入域名前缀后自动检测是否可注册') };
+                return { stop: true, level: 'muted', message: '' };
             }
             if (prefix.length < minLen) {
-                return { stop: true, level: 'muted', message: cfLangFormat('registerAvailabilityMinLength', '至少输入 %s 个字符后检测', minLen) };
+                return { stop: true, level: 'muted', message: cfLangFormat('registerAvailabilityMinLength', 'Enter at least %s characters to check', minLen) };
             }
             if (prefix.length > maxLen) {
-                return { stop: true, level: 'danger', message: cfLangFormat('registerAvailabilityMaxLength', '前缀长度不能超过 %s 个字符', maxLen) };
+                return { stop: true, level: 'danger', message: cfLangFormat('registerAvailabilityMaxLength', 'Prefix cannot exceed %s characters', maxLen) };
             }
             if (!/^[a-zA-Z0-9-]+$/.test(prefix)) {
-                return { stop: true, level: 'danger', message: cfLang('registerAvailabilityInvalidChars', '只能包含字母、数字和连字符') };
+                return { stop: true, level: 'danger', message: cfLang('registerAvailabilityInvalidChars', 'Only letters, digits, and hyphens are allowed') };
             }
             if (prefix.startsWith('.') || prefix.startsWith('-') || prefix.endsWith('.') || prefix.endsWith('-')) {
                 return { stop: true, level: 'danger', message: cfLang('registerEdgeError', '域名前缀不能以 "." 或 "-" 开头或结尾') };
@@ -293,7 +293,7 @@ const dnsUnlockRequired = dnsUnlockFeatureEnabled && <?php echo !empty($dnsUnloc
             const inviteRequired = ROOT_INVITE_REQUIRED_MAP[String(rootdomain || '').toLowerCase()] || false;
             const inviteCodeValue = inviteCodeInput ? inviteCodeInput.value.trim() : '';
             if (inviteRequired && !inviteCodeValue) {
-                return { stop: true, level: 'warning', message: cfLang('registerAvailabilityInviteRequired', '该根域名需要邀请码，输入邀请码后继续检测') };
+                return { stop: true, level: 'warning', message: cfLang('registerAvailabilityInviteRequired', 'This root domain requires an invite code. Enter it to continue checking') };
             }
             return { stop: false };
         }
@@ -308,7 +308,7 @@ const dnsUnlockRequired = dnsUnlockFeatureEnabled && <?php echo !empty($dnsUnloc
                 setRegisterAvailabilityHint(local.level, local.message);
                 return;
             }
-            setRegisterAvailabilityHint('muted', cfLang('registerAvailabilityWaiting', '等待输入完成后检测...'));
+            setRegisterAvailabilityHint('muted', cfLang('registerAvailabilityWaiting', 'Waiting for input to finish before checking...'));
             registerAvailabilityTimer = setTimeout(function(){
                 const currentPrefix = registerPrefixInput.value.trim();
                 const currentRoot = rootSelect.value.trim();
@@ -326,7 +326,7 @@ const dnsUnlockRequired = dnsUnlockFeatureEnabled && <?php echo !empty($dnsUnloc
                     return;
                 }
                 const seq = ++registerAvailabilitySeq;
-                setRegisterAvailabilityHint('info', cfLang('registerAvailabilityChecking', '正在检测是否可以注册...'));
+                setRegisterAvailabilityHint('info', cfLang('registerAvailabilityChecking', 'Checking availability...'));
                 fetch(cfClientBuildModuleUrl('ajax_check_subdomain_availability'), {
                     method: 'POST',
                     headers: {
@@ -342,12 +342,12 @@ const dnsUnlockRequired = dnsUnlockFeatureEnabled && <?php echo !empty($dnsUnloc
                     if (seq !== registerAvailabilitySeq) { return; }
                     const data = res && res.data ? res.data : res;
                     const level = data && data.level ? data.level : (res && res.success ? 'muted' : 'warning');
-                    const message = data && data.message ? data.message : (res && res.error ? res.error : cfLang('registerAvailabilityFailed', '检测失败，请稍后重试'));
+                    const message = data && data.message ? data.message : (res && res.error ? res.error : cfLang('registerAvailabilityFailed', 'Availability check failed. Please try again later'));
                     registerAvailabilityCache[cacheKey] = { level: level, message: message, expiresAt: now + 30000 };
                     setRegisterAvailabilityHint(level, message);
                 }).catch(function(){
                     if (seq !== registerAvailabilitySeq) { return; }
-                    setRegisterAvailabilityHint('warning', cfLang('registerAvailabilityFailed', '检测失败，请稍后重试'));
+                    setRegisterAvailabilityHint('warning', cfLang('registerAvailabilityFailed', 'Availability check failed. Please try again later'));
                 });
             }, 500);
         }

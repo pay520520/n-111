@@ -2448,31 +2448,31 @@ class CfClientController
         };
 
         if (!empty($globals['maintenanceMode']) || self::settingEnabled($settings['maintenance_mode'] ?? '0')) {
-            return $make(false, 'warning', 'maintenance', self::actionText('register.availability.maintenance', '系统维护中，暂时无法注册新域名。'));
+            return $make(false, 'warning', 'maintenance', self::actionText('cfclient.actions.register.availability.maintenance', '系统维护中，暂时无法注册新域名。'));
         }
         if (!empty($globals['pauseFreeRegistration']) || self::settingEnabled($settings['pause_free_registration'] ?? '0')) {
-            return $make(false, 'warning', 'registration_paused', self::actionText('register.availability.paused', '当前已暂停免费域名注册，请稍后再试。'));
+            return $make(false, 'warning', 'registration_paused', self::actionText('cfclient.actions.register.availability.paused', '当前已暂停免费域名注册，请稍后再试。'));
         }
         if ($userId <= 0) {
-            return $make(false, 'warning', 'login_required', self::actionText('register.availability.login_required', '请先登录后再检测注册状态。'));
+            return $make(false, 'warning', 'login_required', self::actionText('cfclient.actions.register.availability.login_required', '请先登录后再检测注册状态。'));
         }
         $banState = (isset($globals['banState']) && is_array($globals['banState']))
             ? $globals['banState']
             : (function_exists('cfmod_resolve_user_ban_state') ? cfmod_resolve_user_ban_state($userId) : ['is_banned' => false, 'reason' => '']);
         if (!empty($globals['isUserBannedOrInactive']) || !empty($banState['is_banned']) || (isset($client->status) && strtolower((string) $client->status) !== 'active')) {
-            return $make(false, 'danger', 'user_banned', self::actionText('register.availability.banned', '您的账号已被封禁或停用，禁止注册新域名。'));
+            return $make(false, 'danger', 'user_banned', self::actionText('cfclient.actions.register.availability.banned', '您的账号已被封禁或停用，禁止注册新域名。'));
         }
         if (class_exists('CfInviteRegistrationService') && CfInviteRegistrationService::isGateEnabled($settings)) {
             try {
                 if (!CfInviteRegistrationService::userHasUnlocked($userId)) {
-                    return $make(false, 'warning', 'invite_gate_locked', self::actionText('invite_registration.gate_locked', '首次使用前请先完成准入验证。'));
+                    return $make(false, 'warning', 'invite_gate_locked', self::actionText('cfclient.actions.invite_registration.gate_locked', '首次使用前请先完成准入验证。'));
                 }
             } catch (\Throwable $ignored) {
-                return $make(false, 'warning', 'invite_gate_locked', self::actionText('invite_registration.gate_locked', '首次使用前请先完成准入验证。'));
+                return $make(false, 'warning', 'invite_gate_locked', self::actionText('cfclient.actions.invite_registration.gate_locked', '首次使用前请先完成准入验证。'));
             }
         }
         if ($prefix === '' || $rootdomain === '') {
-            return $make(false, 'muted', 'missing_fields', self::actionText('register.availability.missing_fields', '请选择根域名并输入域名前缀。'));
+            return $make(false, 'muted', 'missing_fields', self::actionText('cfclient.actions.register.availability.missing_fields', '请选择根域名并输入域名前缀。'));
         }
 
         $prefixLimits = function_exists('cf_get_prefix_length_limits') ? cf_get_prefix_length_limits($settings) : [
@@ -2483,34 +2483,34 @@ class CfClientController
         $maxLen = max($minLen, intval($prefixLimits['max'] ?? 32));
         $prefixLen = strlen($prefixRaw);
         if ($prefixLen < $minLen || $prefixLen > $maxLen) {
-            return $make(false, 'danger', 'invalid_length', self::actionText('register.length_error', '子域名前缀长度必须在%1$s-%2$s个字符之间', [$minLen, $maxLen]));
+            return $make(false, 'danger', 'invalid_length', self::actionText('cfclient.actions.register.length_error', '子域名前缀长度必须在%1$s-%2$s个字符之间', [$minLen, $maxLen]));
         }
         if (!preg_match('/^[a-zA-Z0-9\-]+$/', $prefixRaw)) {
-            return $make(false, 'danger', 'invalid_chars', self::actionText('register.invalid_chars', '子域名前缀只能包含字母、数字和连字符'));
+            return $make(false, 'danger', 'invalid_chars', self::actionText('cfclient.actions.register.invalid_chars', '子域名前缀只能包含字母、数字和连字符'));
         }
         $hasInvalidEdge = function_exists('cfmod_has_invalid_edge_character')
             ? cfmod_has_invalid_edge_character($prefixRaw)
             : (substr($prefixRaw, 0, 1) === '-' || substr($prefixRaw, -1) === '-' || substr($prefixRaw, 0, 1) === '.' || substr($prefixRaw, -1) === '.');
         if ($hasInvalidEdge) {
-            return $make(false, 'danger', 'invalid_edge', self::actionText('register.edge_error', "子域名前缀不能以 '.' 或 '-' 开头或结尾"));
+            return $make(false, 'danger', 'invalid_edge', self::actionText('cfclient.actions.register.edge_error', "子域名前缀不能以 '.' 或 '-' 开头或结尾"));
         }
         $forbidden = array_map('strtolower', array_map('trim', (array) ($globals['forbidden'] ?? explode(',', (string) ($settings['forbidden_prefix'] ?? 'www,mail,ftp,admin,root,gov,pay,bank')))));
         if (in_array($prefix, $forbidden, true)) {
-            return $make(false, 'danger', 'forbidden_prefix', self::actionText('register.forbidden_prefix', "该前缀 '%s' 禁止使用", [$prefix]));
+            return $make(false, 'danger', 'forbidden_prefix', self::actionText('cfclient.actions.register.forbidden_prefix', "该前缀 '%s' 禁止使用", [$prefix]));
         }
 
         $allowedRoots = array_map(static function ($item) { return strtolower(rtrim(trim((string) $item), '.')); }, (array) ($globals['roots'] ?? []));
         if (!in_array($rootdomain, $allowedRoots, true)) {
-            return $make(false, 'danger', 'root_not_allowed', self::actionText('register.root_not_allowed', '根域名未被允许注册'));
+            return $make(false, 'danger', 'root_not_allowed', self::actionText('cfclient.actions.register.root_not_allowed', '根域名未被允许注册'));
         }
         $rootMaintenanceMap = is_array($globals['rootMaintenanceMap'] ?? null) ? $globals['rootMaintenanceMap'] : [];
         if (!empty($rootMaintenanceMap[$rootdomain])) {
-            return $make(false, 'warning', 'root_maintenance', self::actionText('dns.rootdomain_maintenance', '该根域名（%s）正在维护中，暂时无法进行DNS操作，请稍后再试。', [$rootdomain]));
+            return $make(false, 'warning', 'root_maintenance', self::actionText('cfclient.actions.dns.rootdomain_maintenance', '该根域名（%s）正在维护中，暂时无法进行DNS操作，请稍后再试。', [$rootdomain]));
         }
 
         $quota = $globals['quota'] ?? null;
         if (is_object($quota) && intval($quota->max_count ?? 0) > 0 && intval($quota->used_count ?? 0) >= intval($quota->max_count ?? 0)) {
-            return $make(false, 'warning', 'quota_exhausted', self::actionText('register.limit_reached', '已达到最大注册数量限制 (%s)', [intval($quota->max_count ?? 0)]));
+            return $make(false, 'warning', 'quota_exhausted', self::actionText('cfclient.actions.register.limit_reached', '已达到最大注册数量限制 (%s)', [intval($quota->max_count ?? 0)]));
         }
         if (function_exists('cfmod_check_rootdomain_user_limit')) {
             try {
@@ -2521,7 +2521,7 @@ class CfClientController
                         : '';
                     if ($limitMessage === '') {
                         $limitValueText = max(1, intval($limitCheck['limit'] ?? 0));
-                        $limitMessage = self::actionText('register.root_user_limit', '%1$s 每个账号最多注册 %2$s 个，您已达到上限', [$rootdomain, $limitValueText]);
+                        $limitMessage = self::actionText('cfclient.actions.register.root_user_limit', '%1$s 每个账号最多注册 %2$s 个，您已达到上限', [$rootdomain, $limitValueText]);
                     }
                     return $make(false, 'warning', 'root_user_limit', $limitMessage);
                 }
@@ -2532,12 +2532,12 @@ class CfClientController
         $inviteRequiredMap = is_array($globals['rootInviteRequiredMap'] ?? null) ? $globals['rootInviteRequiredMap'] : [];
         $inviteRequired = !empty($inviteRequiredMap[$rootdomain]);
         if ($inviteRequired && $inviteCode === '') {
-            return $make(false, 'warning', 'invite_required', self::actionText('rootdomain_invite.code_required', '该根域名需要邀请码才能注册，请输入邀请码。'), ['requires_invite' => true]);
+            return $make(false, 'warning', 'invite_required', self::actionText('cfclient.actions.rootdomain_invite.code_required', '该根域名需要邀请码才能注册，请输入邀请码。'), ['requires_invite' => true]);
         }
         if ($inviteRequired) {
             $inviteCheck = self::validateRootdomainInviteCodeForAvailability($userId, $rootdomain, $inviteCode);
             if (empty($inviteCheck['valid'])) {
-                return $make(false, 'danger', (string) ($inviteCheck['reason'] ?? 'invite_invalid'), (string) ($inviteCheck['message'] ?? self::actionText('rootdomain_invite.invalid_code', '邀请码无效，请检查后重试。')), ['requires_invite' => true]);
+                return $make(false, 'danger', (string) ($inviteCheck['reason'] ?? 'invite_invalid'), (string) ($inviteCheck['message'] ?? self::actionText('cfclient.actions.rootdomain_invite.invalid_code', '邀请码无效，请检查后重试。')), ['requires_invite' => true]);
             }
         }
 
@@ -2547,7 +2547,7 @@ class CfClientController
                     ->where('domain', $fullsub)
                     ->exists();
                 if ($isForbidden) {
-                    return $make(false, 'danger', 'forbidden_domain', self::actionText('register.forbidden_domain', '该域名已被禁止注册'));
+                    return $make(false, 'danger', 'forbidden_domain', self::actionText('cfclient.actions.register.forbidden_domain', '该域名已被禁止注册'));
                 }
             }
         } catch (\Throwable $ignored) {
@@ -2557,55 +2557,55 @@ class CfClientController
                 ->where('subdomain', $fullsub)
                 ->exists();
             if ($exists) {
-                return $make(false, 'danger', 'duplicate', self::actionText('register.duplicate', "域名 '%s' 已被注册,请更换后重试.", [$fullsub]));
+                return $make(false, 'danger', 'duplicate', self::actionText('cfclient.actions.register.duplicate', "域名 '%s' 已被注册,请更换后重试.", [$fullsub]));
             }
         } catch (\Throwable $ignored) {
             return $make(false, 'warning', 'check_failed', self::actionText('cfclient.register.availability.error', '检测失败，请稍后重试。'));
         }
 
-        return $make(true, 'success', 'available', self::actionText('register.availability.available', '子域名可注册'));
+        return $make(true, 'success', 'available', self::actionText('cfclient.actions.register.availability.available', '子域名可注册'));
     }
 
     private static function validateRootdomainInviteCodeForAvailability(int $userId, string $rootdomain, string $inviteCode): array
     {
         $inviteCode = strtoupper(trim($inviteCode));
         if ($inviteCode === '') {
-            return ['valid' => false, 'reason' => 'invite_required', 'message' => self::actionText('rootdomain_invite.code_required', '该根域名需要邀请码才能注册，请输入邀请码。')];
+            return ['valid' => false, 'reason' => 'invite_required', 'message' => self::actionText('cfclient.actions.rootdomain_invite.code_required', '该根域名需要邀请码才能注册，请输入邀请码。')];
         }
         if (!preg_match('/^[A-Z0-9]{10}$/', $inviteCode)) {
-            return ['valid' => false, 'reason' => 'invite_invalid_format', 'message' => self::actionText('rootdomain_invite.invalid_code', '邀请码无效，请检查后重试。')];
+            return ['valid' => false, 'reason' => 'invite_invalid_format', 'message' => self::actionText('cfclient.actions.rootdomain_invite.invalid_code', '邀请码无效，请检查后重试。')];
         }
         try {
             if (!Capsule::schema()->hasTable('mod_cloudflare_rootdomain_invite_codes')) {
-                return ['valid' => false, 'reason' => 'invite_unavailable', 'message' => self::actionText('rootdomain_invite.error_unavailable', '邀请服务暂不可用，请稍后再试。')];
+                return ['valid' => false, 'reason' => 'invite_unavailable', 'message' => self::actionText('cfclient.actions.rootdomain_invite.error_unavailable', '邀请服务暂不可用，请稍后再试。')];
             }
             $codeRow = Capsule::table('mod_cloudflare_rootdomain_invite_codes')
                 ->where('invite_code', $inviteCode)
                 ->where('rootdomain', $rootdomain)
                 ->first();
             if (!$codeRow) {
-                return ['valid' => false, 'reason' => 'invalid_code', 'message' => self::actionText('rootdomain_invite.invalid_code', '邀请码无效，请检查后重试。')];
+                return ['valid' => false, 'reason' => 'invalid_code', 'message' => self::actionText('cfclient.actions.rootdomain_invite.invalid_code', '邀请码无效，请检查后重试。')];
             }
             $inviterId = (int) ($codeRow->userid ?? 0);
             if ($inviterId === $userId) {
-                return ['valid' => false, 'reason' => 'self_code', 'message' => self::actionText('rootdomain_invite.self_code', '不能使用自己的邀请码。')];
+                return ['valid' => false, 'reason' => 'self_code', 'message' => self::actionText('cfclient.actions.rootdomain_invite.self_code', '不能使用自己的邀请码。')];
             }
             $inviterStatus = Capsule::table('tblclients')->where('id', $inviterId)->value('status');
             if ($inviterStatus !== null && strtolower((string) $inviterStatus) !== 'active') {
-                return ['valid' => false, 'reason' => 'inviter_banned', 'message' => self::actionText('rootdomain_invite.inviter_banned', '邀请人账户状态异常，无法使用该邀请码。')];
+                return ['valid' => false, 'reason' => 'inviter_banned', 'message' => self::actionText('cfclient.actions.rootdomain_invite.inviter_banned', '邀请人账户状态异常，无法使用该邀请码。')];
             }
             if (function_exists('cfmod_resolve_user_ban_state')) {
                 $banState = cfmod_resolve_user_ban_state($inviterId);
                 if (!empty($banState['is_banned'])) {
-                    return ['valid' => false, 'reason' => 'inviter_banned', 'message' => self::actionText('rootdomain_invite.inviter_banned', '邀请人账户状态异常，无法使用该邀请码。')];
+                    return ['valid' => false, 'reason' => 'inviter_banned', 'message' => self::actionText('cfclient.actions.rootdomain_invite.inviter_banned', '邀请人账户状态异常，无法使用该邀请码。')];
                 }
             }
             if (class_exists('CfRootdomainInviteService') && !CfRootdomainInviteService::checkInviterLimit($inviterId, $rootdomain)) {
-                return ['valid' => false, 'reason' => 'inviter_limit_reached', 'message' => self::actionText('rootdomain_invite.inviter_limit_reached', '该邀请码已达使用上限。')];
+                return ['valid' => false, 'reason' => 'inviter_limit_reached', 'message' => self::actionText('cfclient.actions.rootdomain_invite.inviter_limit_reached', '该邀请码已达使用上限。')];
             }
             return ['valid' => true, 'reason' => 'ok'];
         } catch (\Throwable $e) {
-            return ['valid' => false, 'reason' => 'invite_check_failed', 'message' => self::actionText('rootdomain_invite.error', '邀请码验证失败：%s', [$e->getMessage()])];
+            return ['valid' => false, 'reason' => 'invite_check_failed', 'message' => self::actionText('cfclient.actions.rootdomain_invite.error', '邀请码验证失败：%s', [$e->getMessage()])];
         }
     }
 
